@@ -2,8 +2,8 @@
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/yourdockerhubuser/starr-db-repair?style=flat-square&logo=docker)](https://hub.docker.com/r/yourdockerhubuser/starr-db-repair)
 [![Docker Image Size](https://img.shields.io/docker/image-size/yourdockerhubuser/starr-db-repair/latest?style=flat-square)](https://hub.docker.com/r/yourdockerhubuser/starr-db-repair)
-[![GitHub release](https://img.shields.io/github/v/release/YOUR_GITHUB_USER/starr-db-repair?style=flat-square)](https://github.com/YOUR_GITHUB_USER/starr-db-repair/releases)
-[![CI](https://github.com/YOUR_GITHUB_USER/starr-db-repair/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/YOUR_GITHUB_USER/starr-db-repair/actions)
+[![GitHub release](https://img.shields.io/github/v/release/Krippler/starr-db-repair?style=flat-square)](https://github.com/Krippler/starr-db-repair/releases)
+[![CI](https://github.com/Krippler/starr-db-repair/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Krippler/starr-db-repair/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 **Web UI tool for diagnosing and repairing Sonarr, Radarr, and Lidarr SQLite databases.**
@@ -33,7 +33,7 @@
 ### Docker Compose (recommended)
 
 ```bash
-git clone https://github.com/YOUR_GITHUB_USER/starr-db-repair.git
+git clone https://github.com/Krippler/starr-db-repair.git
 cd starr-db-repair
 cp .env.example .env       # edit with your paths & API keys
 docker compose up -d
@@ -141,7 +141,7 @@ docker restart sonarr     # or radarr / lidarr
 
 Or manually add the template URL in Apps → Settings:
 ```
-https://raw.githubusercontent.com/YOUR_GITHUB_USER/starr-db-repair/main/templates/unraid.xml
+https://raw.githubusercontent.com/Krippler/starr-db-repair/main/templates/unraid.xml
 ```
 
 ---
@@ -182,7 +182,7 @@ https://raw.githubusercontent.com/YOUR_GITHUB_USER/starr-db-repair/main/template
 
 ```bash
 # Clone and set up
-git clone https://github.com/YOUR_GITHUB_USER/starr-db-repair.git
+git clone https://github.com/Krippler/starr-db-repair.git
 cd starr-db-repair
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r app/requirements.txt
