@@ -32,7 +32,7 @@ In your GitHub repo: **Settings → Secrets and variables → Actions → New se
 
 | Secret name | Value |
 |---|---|
-| `DOCKERHUB_USERNAME` | Your Docker Hub username |
+| `Krippler52` | Your Docker Hub username |
 | `DOCKERHUB_TOKEN` | The access token from step 2 |
 
 ---
@@ -44,14 +44,14 @@ In the project files, replace:
 | Placeholder | Replace with |
 |---|---|
 | `Krippler` | Your GitHub username |
-| `yourdockerhubuser` | Your Docker Hub username |
+| `Krippler52` | Your Docker Hub username |
 | `YOUR_NAME` | Your name (in LICENSE) |
 | `your@email.com` | Your email (in Dockerfile LABEL) |
 
 Quick replace:
 ```bash
 grep -rl 'Krippler'   . | xargs sed -i 's/Krippler/mygithubuser/g'
-grep -rl 'yourdockerhubuser'  . | xargs sed -i 's/yourdockerhubuser/mydockerhubuser/g'
+grep -rl 'Krippler52'  . | xargs sed -i 's/Krippler52/mydockerhubuser/g'
 ```
 
 ---
