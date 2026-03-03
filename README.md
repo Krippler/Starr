@@ -1,7 +1,7 @@
 # 🛠 Starr DB Repair
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/yourdockerhubuser/Starr?style=flat-square&logo=docker)](https://hub.docker.com/r/yourdockerhubuser/Starr)
-[![Docker Image Size](https://img.shields.io/docker/image-size/yourdockerhubuser/Starr/latest?style=flat-square)](https://hub.docker.com/r/yourdockerhubuser/Starr)
+[![Docker Pulls](https://img.shields.io/docker/pulls/Krippler52/Starr?style=flat-square&logo=docker)](https://hub.docker.com/r/Krippler52/Starr)
+[![Docker Image Size](https://img.shields.io/docker/image-size/Krippler52/Starr/latest?style=flat-square)](https://hub.docker.com/r/Krippler52/Starr)
 [![GitHub release](https://img.shields.io/github/v/release/Krippler/Starr?style=flat-square)](https://github.com/Krippler/Starr/releases)
 [![CI](https://github.com/Krippler/Starr/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Krippler/Starr/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
@@ -54,7 +54,7 @@ docker run -d \
   -v /mnt/user/appdata/Starr/backups:/backups \
   -e SONARR_HOST=sonarr \
   -e SONARR_APIKEY=your-api-key \
-  yourdockerhubuser/Starr:latest
+  Krippler52/Starr:latest
 ```
 
 ---
