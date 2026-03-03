@@ -2,11 +2,11 @@
 <Container version="2">
 
   <!-- ── Basic metadata ─────────────────────────────────────────────────── -->
-  <Name>starr-db-repair</Name>
-  <Repository>yourdockerhubuser/starr-db-repair</Repository>
-  <Registry>https://hub.docker.com/r/yourdockerhubuser/starr-db-repair</Registry>
-  <GitHub>https://github.com/Krippler/starr-db-repair</GitHub>
-  <Project>https://github.com/Krippler/starr-db-repair</Project>
+  <Name>Starr</Name>
+  <Repository>yourdockerhubuser/Starr</Repository>
+  <Registry>https://hub.docker.com/r/yourdockerhubuser/Starr</Registry>
+  <GitHub>https://github.com/Krippler/Starr</GitHub>
+  <Project>https://github.com/Krippler/Starr</Project>
   <Overview>
     Web UI for diagnosing and repairing Sonarr, Radarr, and Lidarr SQLite databases.
     Safely shuts down the target app, creates a timestamped backup, runs SQLite
@@ -19,11 +19,11 @@
   <!-- ── Appearance ─────────────────────────────────────────────────────── -->
   <Category>Tools: MediaServer:Other</Category>
   <WebUI>http://[IP]:[PORT:8877]/</WebUI>
-  <TemplateURL>https://raw.githubusercontent.com/Krippler/starr-db-repair/main/templates/unraid.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/Krippler/starr-db-repair/main/docs/icon.png</Icon>
+  <TemplateURL>https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/Krippler/Starr/main/docs/icon.png</Icon>
   <ExtraParams>--restart=unless-stopped</ExtraParams>
-  <Support>https://github.com/Krippler/starr-db-repair/issues</Support>
-  <ReadmeURL>https://github.com/Krippler/starr-db-repair/blob/main/README.md</ReadmeURL>
+  <Support>https://github.com/Krippler/Starr/issues</Support>
+  <ReadmeURL>https://github.com/Krippler/Starr/blob/main/README.md</ReadmeURL>
 
   <!-- ── Networking ─────────────────────────────────────────────────────── -->
   <Networking>
@@ -60,7 +60,7 @@
 
   <!-- Backup output directory -->
   <Volume>
-    <HostDir>/mnt/user/appdata/starr-db-repair/backups</HostDir>
+    <HostDir>/mnt/user/appdata/Starr/backups</HostDir>
     <ContainerDir>/backups</ContainerDir>
     <Mode>rw</Mode>
   </Volume>
