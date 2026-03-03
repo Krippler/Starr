@@ -1,9 +1,9 @@
 # 🛠 Starr DB Repair
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/yourdockerhubuser/starr-db-repair?style=flat-square&logo=docker)](https://hub.docker.com/r/yourdockerhubuser/starr-db-repair)
-[![Docker Image Size](https://img.shields.io/docker/image-size/yourdockerhubuser/starr-db-repair/latest?style=flat-square)](https://hub.docker.com/r/yourdockerhubuser/starr-db-repair)
-[![GitHub release](https://img.shields.io/github/v/release/Krippler/starr-db-repair?style=flat-square)](https://github.com/Krippler/starr-db-repair/releases)
-[![CI](https://github.com/Krippler/starr-db-repair/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Krippler/starr-db-repair/actions)
+[![Docker Pulls](https://img.shields.io/docker/pulls/yourdockerhubuser/Starr?style=flat-square&logo=docker)](https://hub.docker.com/r/yourdockerhubuser/Starr)
+[![Docker Image Size](https://img.shields.io/docker/image-size/yourdockerhubuser/Starr/latest?style=flat-square)](https://hub.docker.com/r/yourdockerhubuser/Starr)
+[![GitHub release](https://img.shields.io/github/v/release/Krippler/Starr?style=flat-square)](https://github.com/Krippler/Starr/releases)
+[![CI](https://github.com/Krippler/Starr/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Krippler/Starr/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 **Web UI tool for diagnosing and repairing Sonarr, Radarr, and Lidarr SQLite databases.**
@@ -33,8 +33,8 @@
 ### Docker Compose (recommended)
 
 ```bash
-git clone https://github.com/Krippler/starr-db-repair.git
-cd starr-db-repair
+git clone https://github.com/Krippler/Starr.git
+cd Starr
 cp .env.example .env       # edit with your paths & API keys
 docker compose up -d
 ```
@@ -45,16 +45,16 @@ Open **http://localhost:8877**
 
 ```bash
 docker run -d \
-  --name starr-db-repair \
+  --name Starr \
   --restart unless-stopped \
   -p 8877:8877 \
   -v /mnt/user/appdata/sonarr:/data/sonarr \
   -v /mnt/user/appdata/radarr:/data/radarr \
   -v /mnt/user/appdata/lidarr:/data/lidarr \
-  -v /mnt/user/appdata/starr-db-repair/backups:/backups \
+  -v /mnt/user/appdata/Starr/backups:/backups \
   -e SONARR_HOST=sonarr \
   -e SONARR_APIKEY=your-api-key \
-  yourdockerhubuser/starr-db-repair:latest
+  yourdockerhubuser/Starr:latest
 ```
 
 ---
@@ -141,7 +141,7 @@ docker restart sonarr     # or radarr / lidarr
 
 Or manually add the template URL in Apps → Settings:
 ```
-https://raw.githubusercontent.com/Krippler/starr-db-repair/main/templates/unraid.xml
+https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml
 ```
 
 ---
@@ -182,8 +182,8 @@ https://raw.githubusercontent.com/Krippler/starr-db-repair/main/templates/unraid
 
 ```bash
 # Clone and set up
-git clone https://github.com/Krippler/starr-db-repair.git
-cd starr-db-repair
+git clone https://github.com/Krippler/Starr.git
+cd Starr
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r app/requirements.txt
 
@@ -192,8 +192,8 @@ cd app
 FLASK_DEBUG=true python server.py
 
 # Build Docker image locally
-docker build -t starr-db-repair:dev .
-docker run -p 8877:8877 starr-db-repair:dev
+docker build -t Starr:dev .
+docker run -p 8877:8877 Starr:dev
 ```
 
 ---
@@ -201,7 +201,7 @@ docker run -p 8877:8877 starr-db-repair:dev
 ## 📦 Project Layout
 
 ```
-starr-db-repair/
+Starr/
 ├── app/
 │   ├── server.py            # Flask backend (REST + SSE)
 │   ├── requirements.txt
