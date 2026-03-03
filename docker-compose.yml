@@ -1,0 +1,73 @@
+version: "3.9"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Starr DB Repair  —  docker-compose
+#
+# Usage:
+#   cp .env.example .env        # fill in your API keys
+#   docker compose up -d
+#   open http://localhost:8877
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  starr-db-repair:
+    image: yourdockerhubuser/starr-db-repair:latest
+    # Or build locally:
+    # build: .
+    container_name: starr-db-repair
+    restart: unless-stopped
+
+    ports:
+      - "${WEB_PORT:-8877}:8877"
+
+    environment:
+      # ── Web server ─────────────────────────────────────────────────────────
+      PORT: 8877
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      SECRET_KEY: ${SECRET_KEY:-change-me}
+
+      # ── Backup settings ────────────────────────────────────────────────────
+      BACKUP_DIR: /backups
+      MAX_BACKUP_AGE_DAYS: ${MAX_BACKUP_AGE_DAYS:-7}
+
+      # ── Sonarr (optional — can also be set in the web UI) ──────────────────
+      SONARR_HOST:    ${SONARR_HOST:-}
+      SONARR_PORT:    ${SONARR_PORT:-8989}
+      SONARR_APIKEY:  ${SONARR_APIKEY:-}
+      SONARR_URLBASE: ${SONARR_URLBASE:-}
+
+      # ── Radarr ─────────────────────────────────────────────────────────────
+      RADARR_HOST:    ${RADARR_HOST:-}
+      RADARR_PORT:    ${RADARR_PORT:-7878}
+      RADARR_APIKEY:  ${RADARR_APIKEY:-}
+      RADARR_URLBASE: ${RADARR_URLBASE:-}
+
+      # ── Lidarr ─────────────────────────────────────────────────────────────
+      LIDARR_HOST:    ${LIDARR_HOST:-}
+      LIDARR_PORT:    ${LIDARR_PORT:-8686}
+      LIDARR_APIKEY:  ${LIDARR_APIKEY:-}
+      LIDARR_URLBASE: ${LIDARR_URLBASE:-}
+
+    volumes:
+      # Mount your Starr app config dirs so the container can read the .db files
+      # Adjust paths to match your setup:
+      - ${SONARR_CONFIG:-/opt/appdata/sonarr}:/data/sonarr:ro
+      - ${RADARR_CONFIG:-/opt/appdata/radarr}:/data/radarr:ro
+      - ${LIDARR_CONFIG:-/opt/appdata/lidarr}:/data/lidarr:ro
+      # Backup output
+      - ${BACKUP_PATH:-./backups}:/backups
+
+    healthcheck:
+      test: ["CMD", "python3", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8877/healthz')"]
+      interval: 30s
+      timeout:  5s
+      retries:  3
+      start_period: 10s
+
+    networks:
+      - starr-net
+
+networks:
+  starr-net:
+    driver: bridge

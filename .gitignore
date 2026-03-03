@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+*.egg-info/
+dist/
+build/
+
+# Docker
+.docker/
+
+# Backups (never commit DB files)
+backups/
+*.db
+*.db-wal
+*.db-shm
+*.db.bak*
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Test output
+.coverage
+htmlcov/
+.pytest_cache/
