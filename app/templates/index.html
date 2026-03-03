@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Starr DB Repair</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Syne:wght@700;800&display=swap');
+
+:root {
+  --bg: #07090c; --panel: #0d1117; --panel2: #111820;
+  --border: #1a2232; --border-hi: #253346;
+  --app: #00c8ff; --app-dim: rgba(0,200,255,.1); --app-glow: rgba(0,200,255,.22);
+  --ok: #00e87a; --ok-dim: rgba(0,232,122,.1);
+  --warn: #ff9500; --warn-dim: rgba(255,149,0,.12);
+  --err: #ff3b5c; --err-dim: rgba(255,59,92,.1);
+  --dry: #b088ff;
+  --text: #cdd9e5; --muted: #4a6070; --dim: #2a3a4a;
+  --radius: 6px;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: 'JetBrains Mono', monospace;
+  min-height: 100vh; overflow-x: hidden;
+}
+/* scanline overlay */
+body::before {
+  content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px,
+    rgba(0,200,255,.008) 2px, rgba(0,200,255,.008) 4px);
+}
+.scanline {
+  position: fixed; top: -50%; left: 0; right: 0; height: 50%;
+  background: linear-gradient(to bottom, transparent, rgba(0,200,255,.012), transparent);
+  animation: scan 10s linear infinite; pointer-events: none; z-index: 1;
+}
+@keyframes scan { to { top: 100%; } }
+
+/* ── layout ── */
+.wrap { position: relative; z-index: 2; max-width: 1060px; margin: 0 auto; padding: 24px 20px 48px; }
+
+/* ── header ── */
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border);
+  flex-wrap: wrap; gap: 12px;
+}
+.logo { display: flex; align-items: center; gap: 14px; }
+.logo-icon {
+  width: 46px; height: 46px; border-radius: var(--radius); flex-shrink: 0;
+  background: var(--app-dim); border: 1px solid var(--app);
+  box-shadow: 0 0 18px var(--app-glow);
+  display: flex; align-items: center; justify-content: center;
+  transition: all .4s;
+}
+.logo-icon svg { color: var(--app); transition: color .4s; }
+.logo h1 { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #fff; line-height: 1; letter-spacing: .03em; }
+.logo p  { font-size: 10px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; margin-top: 4px; }
+.header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.version-badge { font-size: 10px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); padding: 5px 10px; border-radius: 4px; }
+.status-badge {
+  display: flex; align-items: center; gap: 7px; font-size: 11px;
+  color: var(--muted); background: var(--panel); border: 1px solid var(--border);
+  padding: 6px 12px; border-radius: 4px; transition: all .3s; min-width: 130px;
+}
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 6px var(--ok); flex-shrink: 0; transition: all .3s; }
+.status-dot.pulse { animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+/* ── app tabs ── */
+.app-tabs { display: flex; gap: 8px; margin-bottom: 20px; }
+.app-tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 14px 10px; background: var(--panel); border: 1px solid var(--border);
+  border-radius: var(--radius); cursor: pointer; transition: all .2s;
+  position: relative; overflow: hidden; font-family: inherit;
+}
+.app-tab::after {
+  content: ''; position: absolute; bottom: 0; left: 0; right: 0; height: 2px;
+  background: var(--tc, var(--app)); transform: scaleX(0); transition: transform .2s; transform-origin: center;
+}
+.app-tab:hover { border-color: var(--border-hi); }
+.app-tab.active { border-color: var(--tc, var(--app)); background: color-mix(in srgb, var(--tc, var(--app)) 8%, var(--panel)); }
+.app-tab.active::after { transform: scaleX(1); }
+.app-tab[data-app="sonarr"] { --tc: #00c8ff; }
+.app-tab[data-app="radarr"] { --tc: #ffd700; }
+.app-tab[data-app="lidarr"] { --tc: #1db954; }
+.tab-emoji { font-size: 22px; line-height: 1; }
+.tab-name  { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); transition: color .2s; }
+.tab-port  { font-size: 9px; color: var(--dim); }
+.app-tab.active .tab-name { color: var(--tc, var(--app)); }
+
+/* ── phase tracker ── */
+.phases { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 16px; }
+.phase {
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 11px 8px; text-align: center; transition: all .3s; position: relative; overflow: hidden;
+}
+.phase::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px; transform: scaleX(0); transition: transform .3s; transform-origin: left; }
+.phase-num   { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: var(--dim); transition: color .3s; line-height: 1; }
+.phase-label { font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--dim); transition: color .3s; margin-top: 3px; }
+.phase.active::before { background: var(--app); transform: scaleX(1); }
+.phase.active { border-color: var(--app); background: var(--app-dim); }
+.phase.active .phase-num, .phase.active .phase-label { color: var(--app); }
+.phase.done::before { background: var(--ok); transform: scaleX(1); }
+.phase.done { border-color: var(--ok); }
+.phase.done .phase-num, .phase.done .phase-label { color: var(--ok); }
+.phase.failed::before { background: var(--err); transform: scaleX(1); }
+.phase.failed { border-color: var(--err); }
+.phase.failed .phase-num, .phase.failed .phase-label { color: var(--err); }
+
+/* ── panels ── */
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; overflow: hidden; }
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 11px 16px; border-bottom: 1px solid var(--border);
+  background: rgba(255,255,255,.018);
+}
+.panel-title { display: flex; align-items: center; gap: 8px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--app); font-weight: 500; transition: color .4s; }
+.panel-body { padding: 16px; }
+
+/* ── form fields ── */
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
+@media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.field input, .field select {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  font-family: 'JetBrains Mono', monospace; font-size: 13px;
+  padding: 9px 12px; border-radius: 4px; outline: none; transition: border-color .2s; width: 100%;
+}
+.field input:focus, .field select:focus {
+  border-color: var(--app);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--app) 20%, transparent);
+}
+.field select option { background: #111820; }
+
+/* ── ops grid ── */
+.ops-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.ops-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 9px; }
+.op-card {
+  background: rgba(255,255,255,.018); border: 1px solid var(--border);
+  border-radius: 5px; padding: 12px; cursor: pointer; user-select: none;
+  transition: all .18s; position: relative; overflow: hidden;
+}
+.op-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: var(--app); transform: scaleX(0); transition: transform .18s; transform-origin: left;
+}
+.op-card:hover { border-color: var(--border-hi); background: color-mix(in srgb, var(--app) 4%, transparent); }
+.op-card:hover::before, .op-card.selected::before { transform: scaleX(1); }
+.op-card.selected { border-color: var(--app); background: color-mix(in srgb, var(--app) 10%, transparent); }
+.op-card.danger.selected { border-color: var(--warn); background: var(--warn-dim); }
+.op-card.danger::before { background: var(--warn); }
+.op-card.danger:hover { border-color: var(--warn); }
+.op-check {
+  position: absolute; top: 9px; right: 9px; width: 16px; height: 16px;
+  border-radius: 3px; border: 1px solid var(--border-hi);
+  display: flex; align-items: center; justify-content: center; transition: all .15s;
+}
+.op-card.selected .op-check { background: var(--app); border-color: var(--app); box-shadow: 0 0 8px var(--app-glow); }
+.op-card.danger.selected .op-check { background: var(--warn); border-color: var(--warn); }
+.op-icon { font-size: 18px; display: block; margin-bottom: 8px; }
+.op-name { font-size: 11px; font-weight: 500; color: var(--text); margin-bottom: 4px; padding-right: 20px; }
+.op-desc { font-size: 10px; color: var(--muted); line-height: 1.5; }
+.op-warn-tag { font-size: 9px; color: var(--warn); }
+
+/* ── progress ── */
+.progress-wrap { display: none; margin-bottom: 14px; }
+.progress-wrap.visible { display: block; }
+.progress-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; }
+.progress-label { color: var(--muted); }
+.progress-pct { color: var(--app); font-weight: 500; transition: color .4s; }
+.progress-track { height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.progress-fill {
+  height: 100%; border-radius: 2px; width: 0%;
+  background: linear-gradient(90deg, var(--app), color-mix(in srgb, var(--app) 55%, #0055ff));
+  box-shadow: 0 0 10px var(--app-glow); transition: width .4s ease;
+}
+.op-pills { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 10px; }
+.op-pill { font-size: 10px; padding: 3px 8px; border-radius: 3px; border: 1px solid var(--border); color: var(--muted); transition: all .25s; }
+.op-pill.active { border-color: var(--app); color: var(--app); background: var(--app-dim); box-shadow: 0 0 8px var(--app-glow); }
+.op-pill.done { border-color: var(--ok); color: var(--ok); background: var(--ok-dim); }
+.op-pill.failed { border-color: var(--err); color: var(--err); background: var(--err-dim); }
+
+/* ── result stats ── */
+.result-grid { display: none; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.result-grid.visible { display: grid; }
+@media (max-width: 560px) { .result-grid { grid-template-columns: repeat(2,1fr); } }
+.stat-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; text-align: center; }
+.stat-val  { font-family: 'Syne', sans-serif; font-size: 26px; font-weight: 800; line-height: 1; margin-bottom: 4px; }
+.stat-val.ok   { color: var(--ok); }
+.stat-val.warn { color: var(--warn); }
+.stat-val.err  { color: var(--err); }
+.stat-val.acc  { color: var(--app); transition: color .4s; }
+.stat-label { font-size: 9px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+
+/* ── terminal ── */
+.terminal { background: #040608; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-bottom: 14px; }
+.terminal-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; background: rgba(255,255,255,.022); border-bottom: 1px solid var(--border);
+}
+.term-dots { display: flex; gap: 6px; }
+.term-dots span { width: 11px; height: 11px; border-radius: 50%; }
+.term-dots span:nth-child(1) { background: #ff3b5c; }
+.term-dots span:nth-child(2) { background: #ff9500; }
+.term-dots span:nth-child(3) { background: #00e87a; }
+.term-title { font-size: 10px; color: var(--muted); letter-spacing: .1em; }
+.term-actions { display: flex; align-items: center; gap: 8px; }
+.line-count { font-size: 9px; color: var(--dim); }
+.terminal-body {
+  padding: 14px 16px; min-height: 220px; max-height: 360px;
+  overflow-y: auto; font-size: 11.5px; line-height: 1.75;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+.log-line { display: flex; gap: 10px; margin-bottom: 1px; animation: logIn .12s ease; }
+@keyframes logIn { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+.log-ts  { color: var(--dim); flex-shrink: 0; font-size: 10.5px; min-width: 62px; }
+.log-tag { flex-shrink: 0; min-width: 52px; font-weight: 500; }
+.log-tag.info  { color: var(--app); }
+.log-tag.ok    { color: var(--ok); }
+.log-tag.warn  { color: var(--warn); }
+.log-tag.err   { color: var(--err); }
+.log-tag.sys   { color: var(--muted); }
+.log-tag.dry   { color: var(--dry); }
+.log-tag.phase { color: #e040fb; }
+.log-msg { color: var(--text); word-break: break-word; }
+.log-msg.dim { color: var(--muted); }
+.cursor { display: inline-block; width: 7px; height: 13px; background: var(--app); animation: blink 1s step-end infinite; vertical-align: text-bottom; margin-left: 2px; transition: background .4s; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* ── backups panel ── */
+.backup-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.backup-table th { text-align: left; padding: 6px 10px; color: var(--muted); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.backup-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
+.backup-table tr:last-child td { border-bottom: none; }
+.backup-table tr:hover td { background: rgba(255,255,255,.02); }
+.empty-state { text-align: center; padding: 24px; color: var(--muted); font-size: 12px; }
+
+/* ── buttons ── */
+.btn {
+  font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: .07em;
+  font-weight: 500; padding: 10px 20px; border-radius: 4px; border: none;
+  cursor: pointer; transition: all .18s; display: inline-flex; align-items: center;
+  gap: 7px; text-transform: uppercase; text-decoration: none;
+}
+.btn-primary {
+  background: var(--app); color: #000;
+  box-shadow: 0 0 16px var(--app-glow);
+  transition: background .4s, box-shadow .4s, filter .18s, transform .18s;
+}
+.btn-primary:hover { filter: brightness(1.15); transform: translateY(-1px); box-shadow: 0 0 24px var(--app-glow); }
+.btn-primary:disabled { background: var(--border-hi); color: var(--muted); box-shadow: none; cursor: not-allowed; transform: none; filter: none; }
+.btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--muted); }
+.btn-ghost:hover { border-color: var(--border-hi); color: var(--text); }
+.btn-danger { background: transparent; border: 1px solid var(--err); color: var(--err); }
+.btn-danger:hover { background: var(--err-dim); }
+.btn-sm { padding: 6px 12px; font-size: 10px; }
+.action-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.link-btn { font-family: 'JetBrains Mono', monospace; font-size: 10px; background: none; border: none; cursor: pointer; letter-spacing: .08em; text-transform: uppercase; padding: 3px 0; text-decoration: underline; text-underline-offset: 3px; transition: filter .15s; }
+.link-btn.accent { color: var(--app); }
+.link-btn.muted  { color: var(--muted); }
+.link-btn:hover  { filter: brightness(1.4); }
+
+/* ── warn box ── */
+.warn-box {
+  background: rgba(255,149,0,.07); border: 1px solid rgba(255,149,0,.28);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px;
+  display: flex; gap: 12px; align-items: flex-start;
+}
+.warn-box-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
+.warn-box-body { font-size: 11px; line-height: 1.7; color: var(--muted); }
+.warn-box-body strong { color: var(--warn); display: block; margin-bottom: 3px; font-size: 12px; }
+code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+
+/* ── divider ── */
+.section-gap { height: 6px; }
+</style>
+</head>
+<body>
+<div class="scanline"></div>
+<div class="wrap">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo">
+      <div class="logo-icon" id="logoIcon">
+        <svg id="logoSvg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <ellipse cx="12" cy="5" rx="9" ry="3"/>
+          <path d="M3 5v14a9 3 0 0 0 18 0V5"/>
+          <path d="M3 12a9 3 0 0 0 18 0"/>
+        </svg>
+      </div>
+      <div>
+        <h1 id="appTitle">STARR DB REPAIR</h1>
+        <p id="appSub">Database Diagnostic &amp; Recovery — v1.0</p>
+      </div>
+    </div>
+    <div class="header-right">
+      <span class="version-badge">Docker Edition</span>
+      <div class="status-badge" id="statusBadge">
+        <div class="status-dot pulse" id="statusDot"></div>
+        <span id="statusText">READY</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- APP TABS -->
+  <div class="app-tabs">
+    <button class="app-tab active" data-app="sonarr" onclick="switchApp('sonarr')">
+      <span class="tab-emoji">📺</span>
+      <span class="tab-name">Sonarr</span>
+      <span class="tab-port">:8989</span>
+    </button>
+    <button class="app-tab" data-app="radarr" onclick="switchApp('radarr')">
+      <span class="tab-emoji">🎬</span>
+      <span class="tab-name">Radarr</span>
+      <span class="tab-port">:7878</span>
+    </button>
+    <button class="app-tab" data-app="lidarr" onclick="switchApp('lidarr')">
+      <span class="tab-emoji">🎵</span>
+      <span class="tab-name">Lidarr</span>
+      <span class="tab-port">:8686</span>
+    </button>
+  </div>
+
+  <!-- PHASE TRACKER -->
+  <div class="phases">
+    <div class="phase" id="ph1"><div class="phase-num">1</div><div class="phase-label">Preflight</div></div>
+    <div class="phase" id="ph2"><div class="phase-num">2</div><div class="phase-label">Shutdown</div></div>
+    <div class="phase" id="ph3"><div class="phase-num">3</div><div class="phase-label">Backup</div></div>
+    <div class="phase" id="ph4"><div class="phase-num">4</div><div class="phase-label">Repair</div></div>
+    <div class="phase" id="ph5"><div class="phase-num">5</div><div class="phase-label">Complete</div></div>
+  </div>
+
+  <!-- CONNECTION -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Connection
+      </div>
+      <span id="connStatus" style="font-size:10px;color:var(--muted)">Not tested</span>
+    </div>
+    <div class="panel-body">
+      <div class="form-grid">
+        <div class="field"><label>Host</label><input id="host" value="localhost" placeholder="localhost or 192.168.1.x"></div>
+        <div class="field"><label>Port</label><input id="port" value="8989" type="number"></div>
+        <div class="field"><label>API Key</label><input id="apikey" type="password" placeholder="Settings › General › API Key"></div>
+        <div class="field"><label>URL Base (optional)</label><input id="urlbase" placeholder="/sonarr"></div>
+      </div>
+      <div class="field" style="margin-bottom:14px">
+        <label>Database Path (optional — auto-detected)</label>
+        <input id="dbpath" placeholder="/config/sonarr.db  or leave blank to auto-detect">
+      </div>
+      <div class="action-row">
+        <button class="btn btn-ghost btn-sm" onclick="testConnection()" id="testBtn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Test Connection
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OPERATIONS -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 1 0 4.93 19.07"/></svg>
+        Repair Operations
+      </div>
+      <div style="display:flex;gap:12px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer">
+          <input type="checkbox" id="dryRunCheck" style="accent-color:var(--dry)">
+          <span style="color:var(--dry)">Dry Run</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer">
+          <input type="checkbox" id="skipShutdownCheck">
+          Skip Shutdown
+        </label>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div class="ops-header">
+        <span style="font-size:10px;color:var(--muted)" id="selCount">0 operations selected</span>
+        <div style="display:flex;gap:10px">
+          <button class="link-btn accent" onclick="selectSafe()">Select Safe</button>
+          <button class="link-btn accent" onclick="selectAll()">All</button>
+          <button class="link-btn muted"  onclick="clearSel()">Clear</button>
+        </div>
+      </div>
+      <div class="ops-grid" id="opsGrid"></div>
+    </div>
+  </div>
+
+  <!-- WARN BOX -->
+  <div class="warn-box">
+    <div class="warn-box-icon">⚠️</div>
+    <div class="warn-box-body">
+      <strong>App will be shut down before any repairs are performed</strong>
+      The repair sequence calls <code>/api/v3/system/shutdown</code>, waits for the process to go offline,
+      creates a timestamped backup in <code>/backups</code>, then runs SQLite operations on the idle file.
+      After completion you must <strong>restart your app manually</strong> (or via docker/Unraid).
+      Do not run while active downloads are in progress.
+    </div>
+  </div>
+
+  <!-- PROGRESS -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-header">
+      <span class="progress-label" id="progressLabel">Initializing...</span>
+      <span class="progress-pct" id="progressPct">0%</span>
+    </div>
+    <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="op-pills" id="opPills"></div>
+  </div>
+
+  <!-- RESULT STATS -->
+  <div class="result-grid" id="resultGrid">
+    <div class="stat-card"><div class="stat-val ok"  id="statFixed">0</div><div class="stat-label">Fixed</div></div>
+    <div class="stat-card"><div class="stat-val warn" id="statWarn">0</div><div class="stat-label">Warnings</div></div>
+    <div class="stat-card"><div class="stat-val err"  id="statErr">0</div><div class="stat-label">Errors</div></div>
+    <div class="stat-card"><div class="stat-val acc"  id="statTime">—</div><div class="stat-label">Duration</div></div>
+  </div>
+
+  <!-- TERMINAL -->
+  <div class="terminal">
+    <div class="terminal-bar">
+      <div class="term-dots"><span></span><span></span><span></span></div>
+      <div class="term-title" id="termTitle">REPAIR LOG</div>
+      <div class="term-actions">
+        <span class="line-count" id="lineCount">0 lines</span>
+        <button class="link-btn muted" style="font-size:9px" onclick="clearLog()">CLEAR</button>
+      </div>
+    </div>
+    <div class="terminal-body" id="termBody">
+      <div class="log-line"><span class="log-ts">00:00:00</span><span class="log-tag sys">SYS</span><span class="log-msg dim">Starr DB Repair ready. Configure connection above and click Run Repair.</span></div>
+      <div class="log-line"><span class="log-ts">00:00:00</span><span class="log-tag sys">SYS</span><span class="log-msg dim">All repair operations run server-side with real-time log streaming.</span></div>
+      <div class="log-line" id="termCursor"><span class="log-ts" id="cursorTs">00:00:00</span><span class="log-tag sys">$</span><span class="log-msg"><span class="cursor" id="cursorBlink"></span></span></div>
+    </div>
+  </div>
+
+  <!-- ACTIONS -->
+  <div class="action-row" style="margin-bottom:20px">
+    <button class="btn btn-primary" id="runBtn" onclick="startRepair()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Run Repair
+    </button>
+    <button class="btn btn-danger" id="stopBtn" onclick="stopRepair()" style="display:none">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+      Stop
+    </button>
+    <button class="btn btn-ghost" onclick="loadBackups()">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
+      Refresh Backups
+    </button>
+  </div>
+
+  <!-- BACKUPS -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Backups
+      </div>
+      <span style="font-size:10px;color:var(--muted)">Stored in /backups · auto-pruned after 7 days</span>
+    </div>
+    <div class="panel-body" id="backupsPanel">
+      <div class="empty-state">Click "Refresh Backups" to load.</div>
+    </div>
+  </div>
+
+</div><!-- /wrap -->
+
+<script>
+// ── App definitions ───────────────────────────────────────────────────────────
+const APPS = {
+  sonarr: {
+    name: 'SONARR', sub: 'TV Series Database Repair', color: '#00c8ff', port: 8989,
+    icon: `<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>`,
+    ops: [
+      { id:'integrity',     name:'Integrity Check',  icon:'🔍', desc:'PRAGMA integrity_check — full page scan.',      safe:true  },
+      { id:'foreign_keys',  name:'Foreign Keys',     icon:'🔗', desc:'Find & remove orphaned FK rows.',               safe:true  },
+      { id:'wal_checkpoint',name:'WAL Checkpoint',   icon:'💾', desc:'Flush write-ahead log to main DB file.',        safe:true  },
+      { id:'vacuum',        name:'VACUUM',           icon:'🧹', desc:'Defragment and reclaim free pages.',            safe:true  },
+      { id:'reindex',       name:'Reindex',          icon:'📑', desc:'Drop and rebuild every index from scratch.',    safe:true  },
+      { id:'analyze',       name:'ANALYZE',          icon:'📊', desc:'Refresh query-planner statistics.',             safe:true  },
+    ]
+  },
+  radarr: {
+    name: 'RADARR', sub: 'Movie Database Repair', color: '#ffd700', port: 7878,
+    icon: `<path d="M7 4v16M17 4v16M3 8h4m10 0h4M3 16h4m10 0h4M7 8h10M7 16h10"/>`,
+    ops: [
+      { id:'integrity',     name:'Integrity Check',  icon:'🔍', desc:'PRAGMA integrity_check — full page scan.',      safe:true  },
+      { id:'foreign_keys',  name:'Foreign Keys',     icon:'🔗', desc:'Find & remove orphaned FK rows.',               safe:true  },
+      { id:'wal_checkpoint',name:'WAL Checkpoint',   icon:'💾', desc:'Flush write-ahead log to main DB file.',        safe:true  },
+      { id:'vacuum',        name:'VACUUM',           icon:'🧹', desc:'Defragment and reclaim free pages.',            safe:true  },
+      { id:'reindex',       name:'Reindex',          icon:'📑', desc:'Drop and rebuild every index from scratch.',    safe:true  },
+      { id:'analyze',       name:'ANALYZE',          icon:'📊', desc:'Refresh query-planner statistics.',             safe:true  },
+    ]
+  },
+  lidarr: {
+    name: 'LIDARR', sub: 'Music Database Repair', color: '#1db954', port: 8686,
+    icon: `<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`,
+    ops: [
+      { id:'integrity',     name:'Integrity Check',  icon:'🔍', desc:'PRAGMA integrity_check — full page scan.',      safe:true  },
+      { id:'foreign_keys',  name:'Foreign Keys',     icon:'🔗', desc:'Find & remove orphaned FK rows.',               safe:true  },
+      { id:'wal_checkpoint',name:'WAL Checkpoint',   icon:'💾', desc:'Flush write-ahead log to main DB file.',        safe:true  },
+      { id:'vacuum',        name:'VACUUM',           icon:'🧹', desc:'Defragment and reclaim free pages.',            safe:true  },
+      { id:'reindex',       name:'Reindex',          icon:'📑', desc:'Drop and rebuild every index from scratch.',    safe:true  },
+      { id:'analyze',       name:'ANALYZE',          icon:'📊', desc:'Refresh query-planner statistics.',             safe:true  },
+    ]
+  }
+};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let currentApp = 'sonarr';
+let selectedOps = new Set();
+let sseSource = null;
+let running = false;
+let lineCount = 0;
+let currentOpIdx = 0;
+let opOrder = [];
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+function boot() {
+  selectSafe();
+  renderOps();
+  loadBackups();
+  // Pre-fill from env if API returns configured apps
+  fetch('/api/apps').then(r => r.json()).then(apps => {
+    const a = apps.find(x => x.app === currentApp);
+    if (a) {
+      if (a.host) document.getElementById('host').value = a.host;
+      if (a.port) document.getElementById('port').value = a.port;
+      if (a.configured) document.getElementById('apikey').placeholder = '(set via environment variable)';
+    }
+  }).catch(() => {});
+}
+
+// ── App switch ────────────────────────────────────────────────────────────────
+function switchApp(app) {
+  if (running) return;
+  currentApp = app;
+  const cfg = APPS[app];
+  document.documentElement.style.setProperty('--app', cfg.color);
+  document.getElementById('appTitle').textContent = cfg.name + ' DB REPAIR';
+  document.getElementById('appSub').textContent = cfg.sub + ' — v1.0';
+  document.getElementById('logoSvg').innerHTML = cfg.icon;
+  document.getElementById('termTitle').textContent = cfg.name + ' REPAIR LOG';
+  document.getElementById('port').value = cfg.port;
+  document.querySelectorAll('.app-tab').forEach(t => t.classList.toggle('active', t.dataset.app === app));
+  resetPhases();
+  document.getElementById('progressWrap').classList.remove('visible');
+  document.getElementById('resultGrid').classList.remove('visible');
+  selectedOps.clear();
+  selectSafe();
+  renderOps();
+  logLine('SYS', `Switched to ${cfg.name}. Port set to ${cfg.port}.`, 'sys');
+  // Pre-fill from env
+  fetch('/api/apps').then(r => r.json()).then(apps => {
+    const a = apps.find(x => x.app === app);
+    if (a && a.host) document.getElementById('host').value = a.host;
+    if (a && a.port) document.getElementById('port').value = a.port;
+  }).catch(() => {});
+}
+
+// ── Ops ───────────────────────────────────────────────────────────────────────
+function renderOps() {
+  const ops = APPS[currentApp].ops;
+  document.getElementById('opsGrid').innerHTML = ops.map(op => `
+    <div class="op-card${op.safe ? '' : ' danger'}${selectedOps.has(op.id) ? ' selected' : ''}"
+         onclick="toggleOp('${op.id}')">
+      <div class="op-check">${selectedOps.has(op.id)
+        ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>'
+        : ''}</div>
+      <span class="op-icon">${op.icon}</span>
+      <div class="op-name">${op.name}</div>
+      <div class="op-desc">${op.desc}${!op.safe ? ' <span class="op-warn-tag">⚠ destructive</span>' : ''}</div>
+    </div>`).join('');
+  document.getElementById('selCount').textContent =
+    `${selectedOps.size} operation${selectedOps.size !== 1 ? 's' : ''} selected`;
+}
+
+function toggleOp(id) { if (!running) { selectedOps.has(id) ? selectedOps.delete(id) : selectedOps.add(id); renderOps(); } }
+function selectSafe() { APPS[currentApp].ops.filter(o => o.safe).forEach(o => selectedOps.add(o.id)); renderOps(); }
+function selectAll()  { APPS[currentApp].ops.forEach(o => selectedOps.add(o.id)); renderOps(); }
+function clearSel()   { selectedOps.clear(); renderOps(); }
+
+// ── Connection test ───────────────────────────────────────────────────────────
+async function testConnection() {
+  const btn = document.getElementById('testBtn');
+  const host   = document.getElementById('host').value.trim();
+  const port   = document.getElementById('port').value.trim();
+  const apikey = document.getElementById('apikey').value.trim();
+  const urlbase = document.getElementById('urlbase').value.trim();
+  if (!apikey) { logLine('ERR', 'API key required.', 'err'); return; }
+
+  btn.disabled = true; btn.textContent = 'Testing…';
+  logLine('INFO', `Testing http://${host}:${port}${urlbase}/api/v3/system/status`, 'info');
+
+  try {
+    const r = await fetch(`http://${host}:${port}${urlbase}/api/v3/system/status`,
+      { headers: { 'X-Api-Key': apikey } });
+    if (r.ok) {
+      const d = await r.json();
+      logLine('OK', `Connected — ${APPS[currentApp].name} v${d.version} on ${d.osName}`, 'ok');
+      document.getElementById('connStatus').textContent = `✓ v${d.version}`;
+      document.getElementById('connStatus').style.color = 'var(--ok)';
+    } else {
+      logLine('ERR', `HTTP ${r.status}: ${r.statusText}`, 'err');
+    }
+  } catch (e) {
+    logLine('WARN', 'Direct connection blocked (CORS). The server-side backend will connect fine.', 'warn');
+    logLine('SYS',  'CORS is expected when the dashboard is served from a different origin.', 'sys');
+    document.getElementById('connStatus').textContent = 'CORS (normal)';
+    document.getElementById('connStatus').style.color = 'var(--warn)';
+  }
+  btn.disabled = false;
+  btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg> Test Connection';
+}
+
+// ── Repair ────────────────────────────────────────────────────────────────────
+async function startRepair() {
+  if (running) return;
+  if (selectedOps.size === 0) { logLine('WARN', 'Select at least one operation.', 'warn'); return; }
+  const apikey = document.getElementById('apikey').value.trim();
+  if (!apikey) { logLine('ERR', 'API key is required.', 'err'); return; }
+
+  const payload = {
+    app:           currentApp,
+    host:          document.getElementById('host').value.trim(),
+    port:          parseInt(document.getElementById('port').value),
+    apikey:        apikey,
+    urlbase:       document.getElementById('urlbase').value.trim(),
+    db_path:       document.getElementById('dbpath').value.trim(),
+    ops:           [...selectedOps],
+    dry_run:       document.getElementById('dryRunCheck').checked,
+    skip_shutdown: document.getElementById('skipShutdownCheck').checked,
+  };
+
+  const res = await fetch('/api/repair/start', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    const err = await res.json();
+    logLine('ERR', err.error || 'Failed to start repair.', 'err'); return;
+  }
+
+  running = true;
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('stopBtn').style.display = 'flex';
+  document.getElementById('resultGrid').classList.remove('visible');
+  document.getElementById('progressWrap').classList.add('visible');
+  setStatus('RUNNING', 'var(--app)', true);
+
+  opOrder = [...selectedOps];
+  document.getElementById('opPills').innerHTML = opOrder.map(id => {
+    const op = APPS[currentApp].ops.find(o => o.id === id);
+    return op ? `<div class="op-pill" id="pill_${id}">${op.icon} ${op.name}</div>` : '';
+  }).join('');
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressPct').textContent = '0%';
+
+  connectSSE();
+}
+
+async function stopRepair() {
+  await fetch('/api/repair/stop', { method: 'POST' });
+  logLine('WARN', 'Stop requested — aborting after current step…', 'warn');
+}
+
+// ── SSE ───────────────────────────────────────────────────────────────────────
+function connectSSE() {
+  if (sseSource) { sseSource.close(); }
+  sseSource = new EventSource('/api/repair/stream');
+
+  sseSource.onmessage = e => {
+    try { handleEntry(JSON.parse(e.data)); } catch (_) {}
+  };
+  sseSource.onerror = () => {
+    if (running) logLine('WARN', 'SSE connection lost — retrying…', 'warn');
+  };
+}
+
+function handleEntry(entry) {
+  if (entry.cls === 'phase') {
+    const t = entry.msg.toLowerCase();
+    if (t.includes('step 1') || t.includes('preflight')) setPhase(1, 'active');
+    if (t.includes('step 2') || t.includes('shutdown'))  { setPhase(1,'done'); setPhase(2,'active'); }
+    if (t.includes('step 3') || t.includes('backup'))    { setPhase(2,'done'); setPhase(3,'active'); }
+    if (t.includes('step 4') || t.includes('repair'))    { setPhase(3,'done'); setPhase(4,'active'); }
+    if (t.includes('step 5') || t.includes('report'))    { setPhase(4,'done'); setPhase(5,'active'); }
+    return; // don't print phase headers
+  }
+
+  if (entry.cls === '__done__') {
+    try {
+      const d = JSON.parse(entry.msg);
+      document.getElementById('statFixed').textContent = d.fixed;
+      document.getElementById('statWarn').textContent  = 0;
+      document.getElementById('statErr').textContent   = d.errors;
+      document.getElementById('statTime').textContent  = d.elapsed + 's';
+      document.getElementById('resultGrid').classList.add('visible');
+      document.getElementById('progressFill').style.width = '100%';
+      document.getElementById('progressPct').textContent = '100%';
+      document.getElementById('progressLabel').textContent = d.dry_run ? 'Dry run complete.' : 'All operations complete.';
+      markAllPillsDone();
+      setPhase(5, 'done');
+      setStatus(d.errors > 0 ? 'DONE WITH ERRORS' : 'COMPLETE',
+                d.errors > 0 ? 'var(--warn)' : 'var(--ok)', false);
+    } catch (_) {}
+    finishJob();
+    return;
+  }
+
+  // Track op progress
+  if (entry.cls === 'info') {
+    const m = entry.msg.match(/^Running\s+(\w+)/i);
+    if (m) activatePill(m[1].toLowerCase());
+  }
+  if (entry.cls === 'ok')  finishPill('done');
+  if (entry.cls === 'err') finishPill('failed');
+
+  appendLogLine(entry);
+}
+
+function finishJob() {
+  running = false;
+  document.getElementById('runBtn').disabled = false;
+  document.getElementById('stopBtn').style.display = 'none';
+  if (sseSource) { setTimeout(() => { sseSource.close(); sseSource = null; }, 5000); }
+}
+
+// ── Phase helpers ─────────────────────────────────────────────────────────────
+function setPhase(n, state) {
+  const el = document.getElementById('ph' + n);
+  if (el) { el.className = 'phase ' + state; }
+}
+function resetPhases() { for (let i = 1; i <= 5; i++) setPhase(i, ''); }
+
+// ── Pill helpers ──────────────────────────────────────────────────────────────
+let activePillId = null;
+function activatePill(partialId) {
+  const match = opOrder.find(id => id.startsWith(partialId) || partialId.startsWith(id.split('_')[0]));
+  if (!match) return;
+  if (activePillId && activePillId !== match) {
+    const prev = document.getElementById('pill_' + activePillId);
+    if (prev) { prev.classList.remove('active'); prev.classList.add('done'); }
+    const idx = opOrder.indexOf(match);
+    const pct = Math.round(idx / opOrder.length * 100);
+    document.getElementById('progressFill').style.width = pct + '%';
+    document.getElementById('progressPct').textContent = pct + '%';
+  }
+  activePillId = match;
+  const el = document.getElementById('pill_' + match);
+  if (el) { el.classList.add('active'); el.classList.remove('done', 'failed'); }
+  const op = APPS[currentApp].ops.find(o => o.id === match);
+  if (op) document.getElementById('progressLabel').textContent = op.name + '…';
+}
+function finishPill(state) {
+  if (!activePillId) return;
+  const el = document.getElementById('pill_' + activePillId);
+  if (el) { el.classList.remove('active'); el.classList.add(state); }
+}
+function markAllPillsDone() {
+  opOrder.forEach(id => {
+    const el = document.getElementById('pill_' + id);
+    if (el && !el.classList.contains('failed')) { el.classList.remove('active'); el.classList.add('done'); }
+  });
+}
+
+// ── Terminal ──────────────────────────────────────────────────────────────────
+function appendLogLine(entry) {
+  const body = document.getElementById('termBody');
+  const cursor = document.getElementById('termCursor');
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  div.innerHTML = `<span class="log-ts">${entry.ts || '00:00:00'}</span>` +
+    `<span class="log-tag ${entry.cls || ''}">${entry.tag}</span>` +
+    `<span class="log-msg">${escHtml(entry.msg)}</span>`;
+  body.insertBefore(div, cursor);
+  document.getElementById('cursorTs').textContent = entry.ts || '00:00:00';
+  lineCount++;
+  document.getElementById('lineCount').textContent = lineCount + ' lines';
+  body.scrollTop = body.scrollHeight;
+}
+
+function logLine(tag, msg, cls) {
+  appendLogLine({ tag, msg, cls, ts: '00:00:00' });
+}
+
+function clearLog() {
+  const body = document.getElementById('termBody');
+  const cursor = document.getElementById('termCursor');
+  while (body.firstChild !== cursor) body.removeChild(body.firstChild);
+  lineCount = 0;
+  document.getElementById('lineCount').textContent = '0 lines';
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Status badge ──────────────────────────────────────────────────────────────
+function setStatus(text, dotColor, pulse) {
+  document.getElementById('statusText').textContent = text;
+  const dot = document.getElementById('statusDot');
+  dot.style.background  = dotColor;
+  dot.style.boxShadow   = `0 0 6px ${dotColor}`;
+  pulse ? dot.classList.add('pulse') : dot.classList.remove('pulse');
+}
+
+// ── Backups ───────────────────────────────────────────────────────────────────
+async function loadBackups() {
+  const panel = document.getElementById('backupsPanel');
+  panel.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const data = await fetch('/api/backups').then(r => r.json());
+    if (!data.length) {
+      panel.innerHTML = '<div class="empty-state">No backups yet. Run a repair to create one.</div>';
+      return;
+    }
+    panel.innerHTML = `<table class="backup-table">
+      <thead><tr><th>File</th><th>Size</th><th>Created</th></tr></thead>
+      <tbody>${data.map(b => `
+        <tr>
+          <td>${escHtml(b.name)}</td>
+          <td>${b.size_mb} MB</td>
+          <td>${new Date(b.created).toLocaleString()}</td>
+        </tr>`).join('')}
+      </tbody></table>`;
+  } catch (e) {
+    panel.innerHTML = '<div class="empty-state" style="color:var(--err)">Failed to load backups.</div>';
+  }
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+boot();
+</script>
+</body>
+</html>
