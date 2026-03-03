@@ -3,8 +3,8 @@
 
   <!-- ── Basic metadata ─────────────────────────────────────────────────── -->
   <Name>Starr</Name>
-  <Repository>yourdockerhubuser/Starr</Repository>
-  <Registry>https://hub.docker.com/r/yourdockerhubuser/Starr</Registry>
+  <Repository>Krippler52/Starr</Repository>
+  <Registry>https://hub.docker.com/r/Krippler52/Starr</Registry>
   <GitHub>https://github.com/Krippler/Starr</GitHub>
   <Project>https://github.com/Krippler/Starr</Project>
   <Overview>
