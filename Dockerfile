@@ -11,12 +11,12 @@ RUN pip install --upgrade pip \
 # ── Stage 2: runtime ──────────────────────────────────────────────────────────
 FROM python:3.12-slim
 
-LABEL org.opencontainers.image.title="Starr DB Repair" \
+LABEL org.opencontainers.image.title="Starr" \
       org.opencontainers.image.description="Web UI for repairing Sonarr, Radarr, and Lidarr SQLite databases" \
-      org.opencontainers.image.url="https://github.com/YOUR_GITHUB_USER/starr-db-repair" \
-      org.opencontainers.image.source="https://github.com/YOUR_GITHUB_USER/starr-db-repair" \
+      org.opencontainers.image.url="https://github.com/Krippler/starr-db-repair" \
+      org.opencontainers.image.source="https://github.com/Krippler/starr-db-repair" \
       org.opencontainers.image.licenses="MIT" \
-      maintainer="your@email.com"
+      maintainer="jasoncatcher@gmail.com"
 
 # Non-root user for security
 RUN groupadd -r starr && useradd -r -g starr -u 1000 starr
