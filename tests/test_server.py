@@ -64,6 +64,17 @@ def test_start_invalid_app(client):
     assert r.status_code == 400
 
 
+def test_start_sportarr_recognized(client):
+    """Sportarr should be recognized as a valid app (will fail at connection, not validation)."""
+    r = client.post("/api/repair/start",
+                    data=json.dumps({"app": "sportarr", "apikey": "x",
+                                     "host": "127.0.0.1", "port": 1867}),
+                    content_type="application/json")
+    # 202 = job started (will fail at preflight since no real Sportarr running)
+    # 409 = already running from a previous test leaking state — both are acceptable
+    assert r.status_code in (202, 409)
+
+
 def test_start_missing_apikey(client):
     r = client.post("/api/repair/start",
                     data=json.dumps({"app": "sonarr"}),
@@ -167,3 +178,10 @@ def test_emit_appends_history():
     assert len(srv._job.history) == initial + 1
     assert srv._job.history[-1]["tag"] == "TEST"
     assert srv._job.history[-1]["msg"] == "hello world"
+
+
+def test_sportarr_in_app_defaults():
+    """Sportarr must be registered with correct port and dbname."""
+    assert "sportarr" in srv.APP_DEFAULTS
+    assert srv.APP_DEFAULTS["sportarr"]["port"] == 1867
+    assert srv.APP_DEFAULTS["sportarr"]["dbname"] == "sportarr.db"

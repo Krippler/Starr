@@ -1,9 +1,9 @@
 # 🛠 Starr DB Repair
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/Krippler52/Starr?style=flat-square&logo=docker)](https://hub.docker.com/r/Krippler52/Starr)
-[![Docker Image Size](https://img.shields.io/docker/image-size/Krippler52/Starr/latest?style=flat-square)](https://hub.docker.com/r/Krippler52/Starr)
-[![GitHub release](https://img.shields.io/github/v/release/Krippler/Starr?style=flat-square)](https://github.com/Krippler/Starr/releases)
-[![CI](https://github.com/Krippler/Starr/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Krippler/Starr/actions)
+[![Docker Pulls](https://img.shields.io/docker/pulls/yourdockerhubuser/starr-db-repair?style=flat-square&logo=docker)](https://hub.docker.com/r/yourdockerhubuser/starr-db-repair)
+[![Docker Image Size](https://img.shields.io/docker/image-size/yourdockerhubuser/starr-db-repair/latest?style=flat-square)](https://hub.docker.com/r/yourdockerhubuser/starr-db-repair)
+[![GitHub release](https://img.shields.io/github/v/release/YOUR_GITHUB_USER/starr-db-repair?style=flat-square)](https://github.com/YOUR_GITHUB_USER/starr-db-repair/releases)
+[![CI](https://github.com/YOUR_GITHUB_USER/starr-db-repair/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/YOUR_GITHUB_USER/starr-db-repair/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 **Web UI tool for diagnosing and repairing Sonarr, Radarr, and Lidarr SQLite databases.**
@@ -22,7 +22,7 @@
 - **Auto-backup** before every repair, with configurable retention (default 7 days)
 - **6 SQLite operations**: integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE
 - **Dry-run mode** — preview every step without making changes
-- **Supports all three Starr apps** — Sonarr · Radarr · Lidarr
+- **Supports all four Starr apps** — Sonarr · Radarr · Lidarr · Sportarr
 - **Multi-arch Docker image** — `linux/amd64` + `linux/arm64` (Unraid, Synology, RPi)
 - **Unraid Community Apps template** included
 
@@ -33,8 +33,8 @@
 ### Docker Compose (recommended)
 
 ```bash
-git clone https://github.com/Krippler/Starr.git
-cd Starr
+git clone https://github.com/YOUR_GITHUB_USER/starr-db-repair.git
+cd starr-db-repair
 cp .env.example .env       # edit with your paths & API keys
 docker compose up -d
 ```
@@ -45,16 +45,16 @@ Open **http://localhost:8877**
 
 ```bash
 docker run -d \
-  --name Starr \
+  --name starr-db-repair \
   --restart unless-stopped \
   -p 8877:8877 \
   -v /mnt/user/appdata/sonarr:/data/sonarr \
   -v /mnt/user/appdata/radarr:/data/radarr \
   -v /mnt/user/appdata/lidarr:/data/lidarr \
-  -v /mnt/user/appdata/Starr/backups:/backups \
+  -v /mnt/user/appdata/starr-db-repair/backups:/backups \
   -e SONARR_HOST=sonarr \
   -e SONARR_APIKEY=your-api-key \
-  Krippler52/Starr:latest
+  yourdockerhubuser/starr-db-repair:latest
 ```
 
 ---
@@ -63,10 +63,11 @@ docker run -d \
 
 | Container path | Purpose |
 |---|---|
-| `/data/sonarr` | Sonarr config directory (must contain `sonarr.db`) |
-| `/data/radarr` | Radarr config directory (must contain `radarr.db`) |
-| `/data/lidarr` | Lidarr config directory (must contain `lidarr.db`) |
-| `/backups`     | Backup output — timestamped `.db` copies stored here |
+| `/data/sonarr`   | Sonarr config directory (must contain `sonarr.db`) |
+| `/data/radarr`   | Radarr config directory (must contain `radarr.db`) |
+| `/data/lidarr`   | Lidarr config directory (must contain `lidarr.db`) |
+| `/data/sportarr` | Sportarr config directory (must contain `sportarr.db`) |
+| `/backups`       | Backup output — timestamped `.db` copies stored here |
 
 > **Mount mode:** `rw` is required so the container can read the DB and write the backup.  
 > The original `.db` is never modified until the app is shut down.
@@ -93,6 +94,10 @@ docker run -d \
 | `LIDARR_PORT` | `8686` | Lidarr HTTP port |
 | `LIDARR_APIKEY` | _(blank)_ | Lidarr API key |
 | `LIDARR_URLBASE` | _(blank)_ | Lidarr URL base |
+| `SPORTARR_HOST`   | _(blank)_ | Sportarr hostname or IP |
+| `SPORTARR_PORT`   | `1867`    | Sportarr HTTP port |
+| `SPORTARR_APIKEY` | _(blank)_ | Sportarr API key |
+| `SPORTARR_URLBASE`| _(blank)_ | Sportarr URL base |
 
 All connection settings can also be entered directly in the web UI — env vars just pre-fill the fields.
 
@@ -141,7 +146,7 @@ docker restart sonarr     # or radarr / lidarr
 
 Or manually add the template URL in Apps → Settings:
 ```
-https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml
+https://raw.githubusercontent.com/YOUR_GITHUB_USER/starr-db-repair/main/templates/unraid.xml
 ```
 
 ---
@@ -182,8 +187,8 @@ https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml
 
 ```bash
 # Clone and set up
-git clone https://github.com/Krippler/Starr.git
-cd Starr
+git clone https://github.com/YOUR_GITHUB_USER/starr-db-repair.git
+cd starr-db-repair
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r app/requirements.txt
 
@@ -192,8 +197,8 @@ cd app
 FLASK_DEBUG=true python server.py
 
 # Build Docker image locally
-docker build -t Starr:dev .
-docker run -p 8877:8877 Starr:dev
+docker build -t starr-db-repair:dev .
+docker run -p 8877:8877 starr-db-repair:dev
 ```
 
 ---
@@ -201,7 +206,7 @@ docker run -p 8877:8877 Starr:dev
 ## 📦 Project Layout
 
 ```
-Starr/
+starr-db-repair/
 ├── app/
 │   ├── server.py            # Flask backend (REST + SSE)
 │   ├── requirements.txt

@@ -63,14 +63,19 @@ class Config:
     LIDARR_PORT       = int(os.environ.get("LIDARR_PORT", "8686"))
     LIDARR_APIKEY     = os.environ.get("LIDARR_APIKEY", "")
     LIDARR_URLBASE    = os.environ.get("LIDARR_URLBASE", "")
+    SPORTARR_HOST     = os.environ.get("SPORTARR_HOST", "")
+    SPORTARR_PORT     = int(os.environ.get("SPORTARR_PORT", "1867"))
+    SPORTARR_APIKEY   = os.environ.get("SPORTARR_APIKEY", "")
+    SPORTARR_URLBASE  = os.environ.get("SPORTARR_URLBASE", "")
 
 app.config.from_object(Config)
 logging.getLogger().setLevel(app.config["LOG_LEVEL"])
 
 APP_DEFAULTS = {
-    "sonarr": {"port": 8989, "dbname": "sonarr.db"},
-    "radarr": {"port": 7878, "dbname": "radarr.db"},
-    "lidarr": {"port": 8686, "dbname": "lidarr.db"},
+    "sonarr":   {"port": 8989, "dbname": "sonarr.db"},
+    "radarr":   {"port": 7878, "dbname": "radarr.db"},
+    "lidarr":   {"port": 8686, "dbname": "lidarr.db"},
+    "sportarr": {"port": 1867, "dbname": "sportarr.db"},
 }
 
 ALL_OPS = ["integrity", "foreign_keys", "wal_checkpoint", "vacuum", "reindex", "analyze"]
@@ -445,7 +450,7 @@ def readyz():
 def api_apps():
     """Return pre-configured app connections."""
     apps = []
-    for name in ("sonarr", "radarr", "lidarr"):
+    for name in ("sonarr", "radarr", "lidarr", "sportarr"):
         host = app.config.get(f"{name.upper()}_HOST", "")
         if host:
             apps.append({
@@ -466,7 +471,7 @@ def api_start():
     cfg = request.get_json(force=True) or {}
     app_name = cfg.get("app", "").lower()
     if app_name not in APP_DEFAULTS:
-        return jsonify({"error": "app must be sonarr, radarr, or lidarr"}), 400
+        return jsonify({"error": "app must be sonarr, radarr, lidarr, or sportarr"}), 400
 
     # Merge env-configured API key if caller did not supply one
     env_key = app.config.get(f"{app_name.upper()}_APIKEY", "")
