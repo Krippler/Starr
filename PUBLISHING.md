@@ -11,7 +11,7 @@ Step-by-step for first-time Docker Hub + GitHub setup.
 git init
 git add .
 git commit -m "chore: initial commit"
-gh repo create YOUR_GITHUB_USER/starr-db-repair --public --push --source=.
+gh repo create YOUR_GITHUB_USER/Starr --public --push --source=.
 ```
 
 ---
@@ -19,7 +19,7 @@ gh repo create YOUR_GITHUB_USER/starr-db-repair --public --push --source=.
 ## 2. Docker Hub
 
 1. Create a free account at https://hub.docker.com
-2. Create a new repository named `starr-db-repair`
+2. Create a new repository named `Starr`
 3. Create an **Access Token**: Account Settings → Security → New Access Token
    - Name: `github-actions`
    - Permissions: Read, Write, Delete
