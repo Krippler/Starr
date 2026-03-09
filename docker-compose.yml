@@ -10,11 +10,11 @@ version: "3.9"
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
-  starr-db-repair:
-    image: yourdockerhubuser/starr-db-repair:latest
+  Starr:
+    image: Krippler52/Starr:latest
     # Or build locally:
     # build: .
-    container_name: starr-db-repair
+    container_name: Starr
     restart: unless-stopped
 
     ports:
