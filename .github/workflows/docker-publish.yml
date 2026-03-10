@@ -96,11 +96,13 @@ jobs:
         # This step uses the identity token to provision an ephemeral certificate
         # against the sigstore community Fulcio instance.
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+      
       - name: Publish to Docker Hub
         uses: docker/build-push-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          push: true
           repository: krippler52/starr
           tags: main, $ {{ github.run_number }}
       
