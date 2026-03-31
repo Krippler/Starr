@@ -7,5 +7,4 @@ flask-cors==6.0.0
 # Was 2.32.3 — fixes CVE-2024-47081, CVE-2026-25645
 requests==2.33.0
 
-# Unchanged — pin it anyway so future builds are reproducible
 gunicorn==23.0.0
