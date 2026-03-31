@@ -138,6 +138,10 @@ header {
 }
 .field select option { background: #111820; }
 
+/* ── auth field highlight ── */
+.field input.auth-field { border-color: rgba(176,136,255,.4); }
+.field input.auth-field:focus { border-color: var(--dry); box-shadow: 0 0 0 1px rgba(176,136,255,.2); }
+
 /* ── ops grid ── */
 .ops-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .ops-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); gap: 9px; }
@@ -277,6 +281,14 @@ header {
 .warn-box-body strong { color: var(--warn); display: block; margin-bottom: 3px; font-size: 12px; }
 code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
 
+/* ── security warn box ── */
+.sec-warn-box {
+  background: rgba(255,59,92,.07); border: 1px solid rgba(255,59,92,.3);
+  border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px;
+  display: flex; gap: 12px; align-items: flex-start;
+}
+.sec-warn-box .warn-box-body strong { color: var(--err); }
+
 /* ── divider ── */
 .section-gap { height: 6px; }
 </style>
@@ -284,6 +296,18 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
 <body>
 <div class="scanline"></div>
 <div class="wrap">
+
+  <!-- DEFAULT KEY WARNING (shown only when SECRET_KEY hasn't been changed) -->
+  {% if using_default_key %}
+  <div class="sec-warn-box" id="defaultKeyWarn">
+    <div class="warn-box-icon">🔓</div>
+    <div class="warn-box-body">
+      <strong>Default SECRET_KEY detected — anyone on your network can access this UI</strong>
+      Set <code>SECRET_KEY=your-secret-here</code> in your <code>.env</code> file and restart the container.
+      Until then, the Web Key field below is not enforced.
+    </div>
+  </div>
+  {% endif %}
 
   <!-- HEADER -->
   <header>
@@ -358,10 +382,25 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         <div class="field"><label>API Key</label><input id="apikey" type="password" placeholder="Settings › General › API Key"></div>
         <div class="field"><label>URL Base (optional)</label><input id="urlbase" placeholder="/sonarr"></div>
       </div>
-      <div class="field" style="margin-bottom:14px">
-        <label>Database Path (optional — auto-detected)</label>
-        <input id="dbpath" placeholder="/config/sonarr.db  or leave blank to auto-detect">
+      <div class="form-grid" style="margin-bottom:14px">
+        <div class="field" style="grid-column:1/-1">
+          <label>Database Path (optional — auto-detected)</label>
+          <input id="dbpath" placeholder="/config/sonarr.db  or leave blank to auto-detect">
+        </div>
       </div>
+
+      <!-- Web Key — maps to SECRET_KEY env var -->
+      <div class="field" style="margin-bottom:14px">
+        <label style="color:var(--dry)">
+          🔑 Web Key
+          <span style="color:var(--muted);font-size:9px;margin-left:6px;letter-spacing:.08em">matches SECRET_KEY in your .env</span>
+        </label>
+        <input id="webkey" type="password" class="auth-field"
+               placeholder="Enter your SECRET_KEY value"
+               oninput="saveWebKey()"
+               autocomplete="current-password">
+      </div>
+
       <div class="action-row">
         <button class="btn btn-ghost btn-sm" onclick="testConnection()" id="testBtn">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -540,23 +579,65 @@ let selectedOps = new Set();
 let sseSource = null;
 let running = false;
 let lineCount = 0;
-let currentOpIdx = 0;
+let activePillId = null;
 let opOrder = [];
+
+// ── Web Key helpers ───────────────────────────────────────────────────────────
+// Stored in sessionStorage so it survives page reloads within the same tab
+// but is cleared when the browser session ends.
+function getWebKey() {
+  return document.getElementById('webkey').value.trim()
+      || sessionStorage.getItem('starr_web_key')
+      || '';
+}
+function saveWebKey() {
+  const key = document.getElementById('webkey').value.trim();
+  if (key) sessionStorage.setItem('starr_web_key', key);
+  else     sessionStorage.removeItem('starr_web_key');
+}
+
+// Build fetch headers — always include the web key
+function authHeaders(extra) {
+  const key = getWebKey();
+  const h = { 'Content-Type': 'application/json', ...(extra || {}) };
+  if (key) h['X-Api-Key'] = key;
+  return h;
+}
+
+// Build a URL with ?api_key= appended — needed for EventSource (can't set headers)
+function authUrl(path) {
+  const key = getWebKey();
+  return key ? `${path}?api_key=${encodeURIComponent(key)}` : path;
+}
+
+// Handle 401 responses uniformly
+function handle401() {
+  logLine('ERR', 'Unauthorized (401) — check your Web Key matches SECRET_KEY.', 'err');
+  setStatus('UNAUTHORIZED', 'var(--err)', false);
+}
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 function boot() {
+  // Restore saved key
+  const saved = sessionStorage.getItem('starr_web_key');
+  if (saved) document.getElementById('webkey').value = saved;
+
   selectSafe();
   renderOps();
   loadBackups();
-  // Pre-fill from env if API returns configured apps
-  fetch('/api/apps').then(r => r.json()).then(apps => {
-    const a = apps.find(x => x.app === currentApp);
-    if (a) {
-      if (a.host) document.getElementById('host').value = a.host;
-      if (a.port) document.getElementById('port').value = a.port;
-      if (a.configured) document.getElementById('apikey').placeholder = '(set via environment variable)';
-    }
-  }).catch(() => {});
+
+  // Pre-fill connection from env-configured apps
+  fetch('/api/apps', { headers: authHeaders() })
+    .then(r => { if (r.status === 401) { handle401(); return null; } return r.json(); })
+    .then(apps => {
+      if (!apps) return;
+      const a = apps.find(x => x.app === currentApp);
+      if (a) {
+        if (a.host) document.getElementById('host').value = a.host;
+        if (a.port) document.getElementById('port').value = a.port;
+        if (a.configured) document.getElementById('apikey').placeholder = '(set via environment variable)';
+      }
+    }).catch(() => {});
 }
 
 // ── App switch ────────────────────────────────────────────────────────────────
@@ -578,12 +659,15 @@ function switchApp(app) {
   selectSafe();
   renderOps();
   logLine('SYS', `Switched to ${cfg.name}. Port set to ${cfg.port}.`, 'sys');
-  // Pre-fill from env
-  fetch('/api/apps').then(r => r.json()).then(apps => {
-    const a = apps.find(x => x.app === app);
-    if (a && a.host) document.getElementById('host').value = a.host;
-    if (a && a.port) document.getElementById('port').value = a.port;
-  }).catch(() => {});
+
+  fetch('/api/apps', { headers: authHeaders() })
+    .then(r => r.ok ? r.json() : null)
+    .then(apps => {
+      if (!apps) return;
+      const a = apps.find(x => x.app === app);
+      if (a && a.host) document.getElementById('host').value = a.host;
+      if (a && a.port) document.getElementById('port').value = a.port;
+    }).catch(() => {});
 }
 
 // ── Ops ───────────────────────────────────────────────────────────────────────
@@ -611,9 +695,9 @@ function clearSel()   { selectedOps.clear(); renderOps(); }
 // ── Connection test ───────────────────────────────────────────────────────────
 async function testConnection() {
   const btn = document.getElementById('testBtn');
-  const host   = document.getElementById('host').value.trim();
-  const port   = document.getElementById('port').value.trim();
-  const apikey = document.getElementById('apikey').value.trim();
+  const host    = document.getElementById('host').value.trim();
+  const port    = document.getElementById('port').value.trim();
+  const apikey  = document.getElementById('apikey').value.trim();
   const urlbase = document.getElementById('urlbase').value.trim();
   if (!apikey) { logLine('ERR', 'API key required.', 'err'); return; }
 
@@ -661,9 +745,12 @@ async function startRepair() {
   };
 
   const res = await fetch('/api/repair/start', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload)
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify(payload),
   });
+
+  if (res.status === 401) { handle401(); return; }
   if (!res.ok) {
     const err = await res.json();
     logLine('ERR', err.error || 'Failed to start repair.', 'err'); return;
@@ -688,14 +775,19 @@ async function startRepair() {
 }
 
 async function stopRepair() {
-  await fetch('/api/repair/stop', { method: 'POST' });
+  const res = await fetch('/api/repair/stop', {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  if (res.status === 401) { handle401(); return; }
   logLine('WARN', 'Stop requested — aborting after current step…', 'warn');
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
+// EventSource cannot set custom headers, so we pass the key as a query param.
 function connectSSE() {
   if (sseSource) { sseSource.close(); }
-  sseSource = new EventSource('/api/repair/stream');
+  sseSource = new EventSource(authUrl('/api/repair/stream'));
 
   sseSource.onmessage = e => {
     try { handleEntry(JSON.parse(e.data)); } catch (_) {}
@@ -713,7 +805,7 @@ function handleEntry(entry) {
     if (t.includes('step 3') || t.includes('backup'))    { setPhase(2,'done'); setPhase(3,'active'); }
     if (t.includes('step 4') || t.includes('repair'))    { setPhase(3,'done'); setPhase(4,'active'); }
     if (t.includes('step 5') || t.includes('report'))    { setPhase(4,'done'); setPhase(5,'active'); }
-    return; // don't print phase headers
+    return;
   }
 
   if (entry.cls === '__done__') {
@@ -736,7 +828,6 @@ function handleEntry(entry) {
     return;
   }
 
-  // Track op progress
   if (entry.cls === 'info') {
     const m = entry.msg.match(/^Running\s+(\w+)/i);
     if (m) activatePill(m[1].toLowerCase());
@@ -762,7 +853,6 @@ function setPhase(n, state) {
 function resetPhases() { for (let i = 1; i <= 5; i++) setPhase(i, ''); }
 
 // ── Pill helpers ──────────────────────────────────────────────────────────────
-let activePillId = null;
 function activatePill(partialId) {
   const match = opOrder.find(id => id.startsWith(partialId) || partialId.startsWith(id.split('_')[0]));
   if (!match) return;
@@ -794,9 +884,9 @@ function markAllPillsDone() {
 
 // ── Terminal ──────────────────────────────────────────────────────────────────
 function appendLogLine(entry) {
-  const body = document.getElementById('termBody');
+  const body   = document.getElementById('termBody');
   const cursor = document.getElementById('termCursor');
-  const div = document.createElement('div');
+  const div    = document.createElement('div');
   div.className = 'log-line';
   div.innerHTML = `<span class="log-ts">${entry.ts || '00:00:00'}</span>` +
     `<span class="log-tag ${entry.cls || ''}">${entry.tag}</span>` +
@@ -813,7 +903,7 @@ function logLine(tag, msg, cls) {
 }
 
 function clearLog() {
-  const body = document.getElementById('termBody');
+  const body   = document.getElementById('termBody');
   const cursor = document.getElementById('termCursor');
   while (body.firstChild !== cursor) body.removeChild(body.firstChild);
   lineCount = 0;
@@ -828,8 +918,8 @@ function escHtml(s) {
 function setStatus(text, dotColor, pulse) {
   document.getElementById('statusText').textContent = text;
   const dot = document.getElementById('statusDot');
-  dot.style.background  = dotColor;
-  dot.style.boxShadow   = `0 0 6px ${dotColor}`;
+  dot.style.background = dotColor;
+  dot.style.boxShadow  = `0 0 6px ${dotColor}`;
   pulse ? dot.classList.add('pulse') : dot.classList.remove('pulse');
 }
 
@@ -838,7 +928,12 @@ async function loadBackups() {
   const panel = document.getElementById('backupsPanel');
   panel.innerHTML = '<div class="empty-state">Loading…</div>';
   try {
-    const data = await fetch('/api/backups').then(r => r.json());
+    const res = await fetch('/api/backups', { headers: authHeaders() });
+    if (res.status === 401) {
+      panel.innerHTML = '<div class="empty-state" style="color:var(--err)">Unauthorized — enter your Web Key above.</div>';
+      return;
+    }
+    const data = await res.json();
     if (!data.length) {
       panel.innerHTML = '<div class="empty-state">No backups yet. Run a repair to create one.</div>';
       return;
