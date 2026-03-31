@@ -20,10 +20,12 @@ import json
 import logging
 import os
 import queue
+import shutil
 import sqlite3
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 
 import requests
@@ -39,37 +41,40 @@ logging.basicConfig(
 log = logging.getLogger("starr-repair")
 
 app = Flask(__name__)
-CORS(app)
 
 # ---------------------------------------------------------------------------
 # Configuration (env-vars with sane defaults)
 # ---------------------------------------------------------------------------
 class Config:
-    SECRET_KEY        = os.environ.get("SECRET_KEY", "change-me-in-production")
+    SECRET_KEY          = os.environ.get("SECRET_KEY", "change-me-in-production")
     MAX_BACKUP_AGE_DAYS = int(os.environ.get("MAX_BACKUP_AGE_DAYS", "7"))
-    BACKUP_DIR        = Path(os.environ.get("BACKUP_DIR", "/backups"))
-    DB_DIR            = Path(os.environ.get("DB_DIR", "/data"))
-    LOG_LEVEL         = os.environ.get("LOG_LEVEL", "INFO")
+    BACKUP_DIR          = Path(os.environ.get("BACKUP_DIR", "/backups"))
+    DB_DIR              = Path(os.environ.get("DB_DIR", "/data"))
+    LOG_LEVEL           = os.environ.get("LOG_LEVEL", "INFO")
+    CORS_ORIGINS        = os.environ.get("CORS_ORIGINS", "http://localhost:8877")
     # Pre-configured app connections (can be set via env or UI)
-    SONARR_HOST       = os.environ.get("SONARR_HOST", "")
-    SONARR_PORT       = int(os.environ.get("SONARR_PORT", "8989"))
-    SONARR_APIKEY     = os.environ.get("SONARR_APIKEY", "")
-    SONARR_URLBASE    = os.environ.get("SONARR_URLBASE", "")
-    RADARR_HOST       = os.environ.get("RADARR_HOST", "")
-    RADARR_PORT       = int(os.environ.get("RADARR_PORT", "7878"))
-    RADARR_APIKEY     = os.environ.get("RADARR_APIKEY", "")
-    RADARR_URLBASE    = os.environ.get("RADARR_URLBASE", "")
-    LIDARR_HOST       = os.environ.get("LIDARR_HOST", "")
-    LIDARR_PORT       = int(os.environ.get("LIDARR_PORT", "8686"))
-    LIDARR_APIKEY     = os.environ.get("LIDARR_APIKEY", "")
-    LIDARR_URLBASE    = os.environ.get("LIDARR_URLBASE", "")
-    SPORTARR_HOST     = os.environ.get("SPORTARR_HOST", "")
-    SPORTARR_PORT     = int(os.environ.get("SPORTARR_PORT", "1867"))
-    SPORTARR_APIKEY   = os.environ.get("SPORTARR_APIKEY", "")
-    SPORTARR_URLBASE  = os.environ.get("SPORTARR_URLBASE", "")
+    SONARR_HOST         = os.environ.get("SONARR_HOST", "")
+    SONARR_PORT         = int(os.environ.get("SONARR_PORT", "8989"))
+    SONARR_APIKEY       = os.environ.get("SONARR_APIKEY", "")
+    SONARR_URLBASE      = os.environ.get("SONARR_URLBASE", "")
+    RADARR_HOST         = os.environ.get("RADARR_HOST", "")
+    RADARR_PORT         = int(os.environ.get("RADARR_PORT", "7878"))
+    RADARR_APIKEY       = os.environ.get("RADARR_APIKEY", "")
+    RADARR_URLBASE      = os.environ.get("RADARR_URLBASE", "")
+    LIDARR_HOST         = os.environ.get("LIDARR_HOST", "")
+    LIDARR_PORT         = int(os.environ.get("LIDARR_PORT", "8686"))
+    LIDARR_APIKEY       = os.environ.get("LIDARR_APIKEY", "")
+    LIDARR_URLBASE      = os.environ.get("LIDARR_URLBASE", "")
+    SPORTARR_HOST       = os.environ.get("SPORTARR_HOST", "")
+    SPORTARR_PORT       = int(os.environ.get("SPORTARR_PORT", "1867"))
+    SPORTARR_APIKEY     = os.environ.get("SPORTARR_APIKEY", "")
+    SPORTARR_URLBASE    = os.environ.get("SPORTARR_URLBASE", "")
 
 app.config.from_object(Config)
 logging.getLogger().setLevel(app.config["LOG_LEVEL"])
+
+# Restrict CORS to configured origins only
+CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
 
 APP_DEFAULTS = {
     "sonarr":   {"port": 8989, "dbname": "sonarr.db"},
@@ -87,6 +92,34 @@ OP_DESC = {
     "reindex":        "REINDEX – drop and rebuild every index",
     "analyze":        "ANALYZE – refresh query-planner statistics",
 }
+
+# ---------------------------------------------------------------------------
+# Auth
+# ---------------------------------------------------------------------------
+def require_api_key(f):
+    """Protect endpoints with the SECRET_KEY.
+
+    Accepts the key via:
+      - X-Api-Key request header  (fetch / XHR)
+      - ?api_key= query parameter  (EventSource / SSE, which can't set headers)
+    """
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        secret = app.config["SECRET_KEY"]
+        # If still using the default key, skip enforcement so out-of-box
+        # experience works, but log a warning on every request.
+        if secret == "change-me-in-production":
+            log.warning("SECRET_KEY is still the default — set a real value in .env!")
+            return f(*args, **kwargs)
+        provided = (
+            request.headers.get("X-Api-Key")
+            or request.args.get("api_key")
+        )
+        if provided != secret:
+            return jsonify({"error": "Unauthorized — invalid or missing API key"}), 401
+        return f(*args, **kwargs)
+    return decorated
+
 
 # ---------------------------------------------------------------------------
 # Job state
@@ -160,9 +193,10 @@ def _get_status(host, port, apikey, urlbase="", timeout=5):
 def _shutdown_app(host, port, apikey, urlbase=""):
     try:
         url = f"{_base_url(host, port, urlbase)}/api/v3/system/shutdown"
-        requests.post(url, headers={"X-Api-Key": apikey}, timeout=10)
-    except Exception:
-        pass
+        r = requests.post(url, headers={"X-Api-Key": apikey}, timeout=10)
+        r.raise_for_status()
+    except requests.RequestException as e:
+        log.warning("Shutdown request failed: %s", e)
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +276,6 @@ def _step_backup(cfg, db_path: str) -> str | None:
     if cfg.get("dry_run"):
         emit("DRY", f"[DRY] Would copy {db_path} → {dest}", "dry"); return str(dest)
 
-    import shutil
     emit("INFO", f"Source : {db_path}", "info")
     emit("INFO", f"Dest   : {dest}", "info")
     try:
@@ -431,22 +464,25 @@ def _repair_worker(cfg: dict) -> None:
 # ---------------------------------------------------------------------------
 @app.route("/")
 def index():
-    return render_template("index.html", config=app.config)
+    # Pass whether a real SECRET_KEY has been configured so the UI can warn
+    using_default_key = app.config["SECRET_KEY"] == "change-me-in-production"
+    return render_template("index.html", config=app.config, using_default_key=using_default_key)
 
 
 @app.route("/healthz")
 def healthz():
-    """Docker / k8s liveness probe."""
-    return jsonify({"status": "ok", "time": datetime.utcnow().isoformat()}), 200
+    """Docker / k8s liveness probe — no auth required."""
+    return jsonify({"status": "ok", "time": datetime.now(timezone.utc).isoformat()}), 200
 
 
 @app.route("/readyz")
 def readyz():
-    """Docker / k8s readiness probe – always ready once Flask is up."""
+    """Docker / k8s readiness probe — no auth required."""
     return jsonify({"status": "ready"}), 200
 
 
 @app.route("/api/apps")
+@require_api_key
 def api_apps():
     """Return pre-configured app connections."""
     apps = []
@@ -454,16 +490,17 @@ def api_apps():
         host = app.config.get(f"{name.upper()}_HOST", "")
         if host:
             apps.append({
-                "app":     name,
-                "host":    host,
-                "port":    app.config.get(f"{name.upper()}_PORT"),
-                "apikey":  "***" if app.config.get(f"{name.upper()}_APIKEY") else "",
+                "app":        name,
+                "host":       host,
+                "port":       app.config.get(f"{name.upper()}_PORT"),
+                "apikey":     "***" if app.config.get(f"{name.upper()}_APIKEY") else "",
                 "configured": bool(app.config.get(f"{name.upper()}_APIKEY")),
             })
     return jsonify(apps)
 
 
 @app.route("/api/repair/start", methods=["POST"])
+@require_api_key
 def api_start():
     if _job.running:
         return jsonify({"error": "A repair job is already running."}), 409
@@ -500,6 +537,7 @@ def api_start():
 
 
 @app.route("/api/repair/stop", methods=["POST"])
+@require_api_key
 def api_stop():
     if not _job.running:
         return jsonify({"error": "No job running."}), 409
@@ -509,6 +547,7 @@ def api_stop():
 
 
 @app.route("/api/repair/status")
+@require_api_key
 def api_status():
     return jsonify({
         "running":  _job.running,
@@ -520,8 +559,11 @@ def api_status():
 
 
 @app.route("/api/repair/stream")
+@require_api_key
 def api_stream():
-    """Server-Sent Events endpoint – streams live log entries."""
+    """Server-Sent Events endpoint – streams live log entries.
+    Auth via ?api_key= query param because EventSource cannot set headers.
+    """
     def generate():
         # Replay history for late-joining clients
         with _job.lock:
@@ -549,13 +591,14 @@ def api_stream():
         stream_with_context(generate()),
         mimetype="text/event-stream",
         headers={
-            "Cache-Control":    "no-cache",
+            "Cache-Control":     "no-cache",
             "X-Accel-Buffering": "no",
         },
     )
 
 
 @app.route("/api/backups")
+@require_api_key
 def api_backups():
     """List backup files in the backup directory."""
     backup_dir = app.config["BACKUP_DIR"]
