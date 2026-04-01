@@ -4,7 +4,10 @@ FROM python:3.12-slim AS builder
 WORKDIR /build
 COPY app/requirements.txt .
 
-RUN pip install --upgrade pip \
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+ && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+RUN pip install --upgrade "pip>=26.0" \
  && pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 
@@ -17,6 +20,11 @@ LABEL org.opencontainers.image.title="Starr" \
       org.opencontainers.image.source="https://github.com/krippler/starr-db-repair" \
       org.opencontainers.image.licenses="MIT" \
       maintainer="jasoncatcher@gmail.com"
+
+# Patch OS packages and upgrade pip in the runtime image (where Scout scans)
+RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+ && apt-get clean && rm -rf /var/lib/apt/lists/* \
+ && pip install --upgrade "pip>=26.0"
 
 # Non-root user for security
 RUN groupadd -r starr && useradd -r -g starr -u 1000 starr
@@ -60,7 +68,7 @@ ENV PORT=8877 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Launch with gunicorn (4 sync workers, threaded for SSE)
+# Launch with gunicorn (1 worker, threaded for SSE)
 CMD ["gunicorn", \
      "--bind", "0.0.0.0:8877", \
      "--workers", "1", \
