@@ -481,6 +481,17 @@ def readyz():
     return jsonify({"status": "ready"}), 200
 
 
+@app.route("/api/config")
+def api_config():
+    """Public config for the UI — no auth required.
+    Tells the frontend whether the default SECRET_KEY is still in use
+    so it can display a security warning without needing Jinja2 templating.
+    """
+    return jsonify({
+        "using_default_key": app.config["SECRET_KEY"] == "change-me-in-production",
+    }), 200
+
+
 @app.route("/api/apps")
 @require_api_key
 def api_apps():
