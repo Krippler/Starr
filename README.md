@@ -1,8 +1,8 @@
 # 🛠 Starr DB Repair
 
-[![Docker Pulls](https://img.shields.io/docker/pulls/krippler52/Starr?style=flat-square&logo=docker)](https://hub.docker.com/r/krippler52/Starr)
-[![Docker Image Size](https://img.shields.io/docker/image-size/krippler52/Starr/latest?style=flat-square)](https://hub.docker.com/r/krippler52/Starr)
-[![GitHub release](https://img.shields.io/github/v/release/krippler/Starr?style=flat-square)](https://github.com/Krippler/Starr/releases)
+[![Docker Pulls](https://img.shields.io/docker/pulls/krippler52/starr?style=flat-square&logo=docker)](https://hub.docker.com/r/krippler52/starr)
+[![Docker Image Size](https://img.shields.io/docker/image-size/krippler52/starr/latest?style=flat-square)](https://hub.docker.com/r/krippler52/starr)
+[![GitHub release](https://img.shields.io/github/v/release/krippler/starr?style=flat-square)](https://github.com/Krippler/Starr/releases)
 [![CI](https://github.com/Krippler/Starr/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Krippler/Starr/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
@@ -45,16 +45,17 @@ Open **http://localhost:8877**
 
 ```bash
 docker run -d \
-  --name Starr \
+  --name starr \
   --restart unless-stopped \
   -p 8877:8877 \
   -v /mnt/user/appdata/sonarr:/data/sonarr \
   -v /mnt/user/appdata/radarr:/data/radarr \
   -v /mnt/user/appdata/lidarr:/data/lidarr \
-  -v /mnt/user/appdata/Starr/backups:/backups \
+  -v /mnt/user/appdata/starr/backups:/backups \
   -e SONARR_HOST=sonarr \
   -e SONARR_APIKEY=your-api-key \
-  yourdockerhubuser/Starr:latest
+  -e SECRET_KEY=your-secret-here \
+  krippler52/starr:latest
 ```
 
 ---
@@ -79,6 +80,7 @@ docker run -d \
 | Variable | Default | Description |
 |---|---|---|
 | `PORT` | `8877` | Web UI listen port |
+| `SECRET_KEY` | _(required)_ | Web UI access key — set this to protect the dashboard |
 | `LOG_LEVEL` | `INFO` | Log level: `DEBUG` `INFO` `WARNING` `ERROR` |
 | `MAX_BACKUP_AGE_DAYS` | `7` | Days to keep backups before auto-pruning |
 | `BACKUP_DIR` | `/backups` | Backup directory inside the container |
@@ -153,17 +155,20 @@ https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml
 
 ## 🌐 API Reference
 
-| Method | Endpoint | Description |
-|---|---|---|
-| `GET` | `/` | Dashboard web UI |
-| `GET` | `/healthz` | Liveness probe `{"status":"ok"}` |
-| `GET` | `/readyz` | Readiness probe |
-| `GET` | `/api/apps` | Env-configured app connections |
-| `POST` | `/api/repair/start` | Start a repair job (JSON body) |
-| `POST` | `/api/repair/stop` | Abort the running job |
-| `GET` | `/api/repair/status` | Current job state |
-| `GET` | `/api/repair/stream` | SSE live log stream |
-| `GET` | `/api/backups` | List backup files |
+| Method | Endpoint | Auth required | Description |
+|---|---|---|---|
+| `GET` | `/` | No | Dashboard web UI |
+| `GET` | `/healthz` | No | Liveness probe `{"status":"ok"}` |
+| `GET` | `/readyz` | No | Readiness probe |
+| `GET` | `/api/apps` | Yes | Env-configured app connections |
+| `POST` | `/api/repair/start` | Yes | Start a repair job (JSON body) |
+| `POST` | `/api/repair/stop` | Yes | Abort the running job |
+| `GET` | `/api/repair/status` | Yes | Current job state |
+| `GET` | `/api/repair/stream` | Yes | SSE live log stream |
+| `GET` | `/api/backups` | Yes | List backup files |
+
+All protected endpoints require an `X-Api-Key` header matching your `SECRET_KEY`.  
+The SSE stream accepts `?api_key=` as a query parameter instead (browsers cannot set headers on `EventSource`).
 
 ### `POST /api/repair/start` body
 
@@ -197,8 +202,8 @@ cd app
 FLASK_DEBUG=true python server.py
 
 # Build Docker image locally
-docker build -t Starr:dev .
-docker run -p 8877:8877 Starr:dev
+docker build -t starr:dev .
+docker run -p 8877:8877 starr:dev
 ```
 
 ---
@@ -233,8 +238,9 @@ Starr/
 
 - The container runs as **non-root** (UID 1000)
 - API keys set via env vars are **never logged or exposed** in the web UI
-- The web UI has **no authentication** by default — place it behind a reverse proxy with auth if exposed beyond your LAN (Authelia, Authentik, nginx basic auth)
-- The Docker image is scanned with **Trivy** on every release
+- The web UI is protected by `SECRET_KEY` — set this in your `.env` file. The dashboard will display a warning if the default key is still in use
+- Place behind a reverse proxy with additional auth (Authelia, Authentik, nginx basic auth) if exposed beyond your LAN
+- The Docker image is scanned with **Docker Scout** on every release
 
 ---
 
