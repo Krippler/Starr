@@ -3,17 +3,18 @@
 
   <!-- ── Basic metadata ─────────────────────────────────────────────────── -->
   <Name>Starr</Name>
-  <Repository>Krippler52/Starr</Repository>
-  <Registry>https://hub.docker.com/r/Krippler52/Starr</Registry>
+  <Repository>krippler52/starr</Repository>
+  <Registry>https://hub.docker.com/r/krippler52/starr</Registry>
   <GitHub>https://github.com/Krippler/Starr</GitHub>
   <Project>https://github.com/Krippler/Starr</Project>
   <Overview>
     Web UI for diagnosing and repairing Sonarr, Radarr, Lidarr, and Sportarr SQLite databases.
     Safely shuts down the target app, creates a timestamped backup, runs SQLite
     PRAGMA repairs (integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX,
-    ANALYZE) on the idle database, then prompts you to restart.
-    All repair operations are streamed live to the browser terminal.
+    ANALYZE) on the idle database, then automatically waits for the app to come
+    back online. All repair operations are streamed live to the browser terminal.
     Supports dry-run mode. Backups are auto-pruned after a configurable number of days.
+    Protect the web UI with a SECRET_KEY to prevent unauthorised access on your network.
   </Overview>
 
   <!-- ── Appearance ─────────────────────────────────────────────────────── -->
@@ -42,6 +43,9 @@
     <HostDir>/mnt/user/appdata/sonarr</HostDir>
     <ContainerDir>/data/sonarr</ContainerDir>
     <Mode>rw</Mode>
+    <Display>always</Display>
+    <Required>false</Required>
+    <Description>Sonarr config directory (must contain sonarr.db). Leave blank if not using Sonarr.</Description>
   </Volume>
 
   <!-- Radarr config directory (contains radarr.db) -->
@@ -49,6 +53,9 @@
     <HostDir>/mnt/user/appdata/radarr</HostDir>
     <ContainerDir>/data/radarr</ContainerDir>
     <Mode>rw</Mode>
+    <Display>always</Display>
+    <Required>false</Required>
+    <Description>Radarr config directory (must contain radarr.db). Leave blank if not using Radarr.</Description>
   </Volume>
 
   <!-- Lidarr config directory (contains lidarr.db) -->
@@ -56,6 +63,9 @@
     <HostDir>/mnt/user/appdata/lidarr</HostDir>
     <ContainerDir>/data/lidarr</ContainerDir>
     <Mode>rw</Mode>
+    <Display>always</Display>
+    <Required>false</Required>
+    <Description>Lidarr config directory (must contain lidarr.db). Leave blank if not using Lidarr.</Description>
   </Volume>
 
   <!-- Sportarr config directory (contains sportarr.db) -->
@@ -63,29 +73,45 @@
     <HostDir>/mnt/user/appdata/sportarr</HostDir>
     <ContainerDir>/data/sportarr</ContainerDir>
     <Mode>rw</Mode>
+    <Display>always</Display>
+    <Required>false</Required>
+    <Description>Sportarr config directory (must contain sportarr.db). Leave blank if not using Sportarr.</Description>
   </Volume>
 
   <!-- Backup output directory -->
   <Volume>
-    <HostDir>/mnt/user/appdata/Starr/backups</HostDir>
+    <HostDir>/mnt/user/appdata/starr/backups</HostDir>
     <ContainerDir>/backups</ContainerDir>
     <Mode>rw</Mode>
+    <Display>always</Display>
+    <Required>true</Required>
+    <Description>Where timestamped database backups are stored. Backups are auto-pruned based on MAX_BACKUP_AGE_DAYS.</Description>
   </Volume>
 
   <!-- ── Environment variables ──────────────────────────────────────────── -->
-
   <Environment>
-    <!-- Web UI port (should match the port mapping above) -->
+
+    <!-- ── Security ── -->
+    <Variable>
+      <Name>SECRET_KEY</Name>
+      <Value></Value>
+      <Description>Web UI access key — set this to a strong random value to protect the dashboard. Anyone who can reach port 8877 can use the UI without this set.</Description>
+      <Display>always</Display>
+      <Required>false</Required>
+      <Mask>true</Mask>
+    </Variable>
+
+    <!-- ── Web server ── -->
     <Variable>
       <Name>PORT</Name>
       <Value>8877</Value>
-      <Description>Web UI listen port inside the container.</Description>
-      <Display>always</Display>
+      <Description>Web UI listen port inside the container. Must match the port mapping above.</Description>
+      <Display>advanced</Display>
       <Required>true</Required>
       <Mask>false</Mask>
     </Variable>
 
-    <!-- Log verbosity -->
+    <!-- ── Logging ── -->
     <Variable>
       <Name>LOG_LEVEL</Name>
       <Value>INFO</Value>
@@ -95,11 +121,11 @@
       <Mask>false</Mask>
     </Variable>
 
-    <!-- Backup retention -->
+    <!-- ── Backup ── -->
     <Variable>
       <Name>MAX_BACKUP_AGE_DAYS</Name>
       <Value>7</Value>
-      <Description>Number of days to keep backups before auto-pruning.</Description>
+      <Description>Number of days to keep backups before auto-pruning. Set to 0 to disable pruning.</Description>
       <Display>always</Display>
       <Required>false</Required>
       <Mask>false</Mask>
@@ -109,7 +135,7 @@
     <Variable>
       <Name>SONARR_HOST</Name>
       <Value></Value>
-      <Description>Sonarr hostname or IP. Leave blank to configure in the web UI.</Description>
+      <Description>Sonarr hostname or IP (e.g. sonarr or 192.168.1.10). Leave blank to configure in the web UI.</Description>
       <Display>always</Display>
       <Required>false</Required>
       <Mask>false</Mask>
@@ -125,7 +151,7 @@
     <Variable>
       <Name>SONARR_APIKEY</Name>
       <Value></Value>
-      <Description>Sonarr API key (Settings › General). Leave blank to enter in the web UI.</Description>
+      <Description>Sonarr API key — found at Settings › General › API Key.</Description>
       <Display>always</Display>
       <Required>false</Required>
       <Mask>true</Mask>
@@ -133,7 +159,7 @@
     <Variable>
       <Name>SONARR_URLBASE</Name>
       <Value></Value>
-      <Description>Sonarr URL base, e.g. /sonarr (leave blank if none).</Description>
+      <Description>Sonarr URL base if you use a reverse proxy subpath, e.g. /sonarr. Leave blank if none.</Description>
       <Display>advanced</Display>
       <Required>false</Required>
       <Mask>false</Mask>
@@ -143,7 +169,7 @@
     <Variable>
       <Name>RADARR_HOST</Name>
       <Value></Value>
-      <Description>Radarr hostname or IP.</Description>
+      <Description>Radarr hostname or IP. Leave blank to configure in the web UI.</Description>
       <Display>always</Display>
       <Required>false</Required>
       <Mask>false</Mask>
@@ -159,7 +185,7 @@
     <Variable>
       <Name>RADARR_APIKEY</Name>
       <Value></Value>
-      <Description>Radarr API key (Settings › General).</Description>
+      <Description>Radarr API key — found at Settings › General › API Key.</Description>
       <Display>always</Display>
       <Required>false</Required>
       <Mask>true</Mask>
@@ -167,7 +193,7 @@
     <Variable>
       <Name>RADARR_URLBASE</Name>
       <Value></Value>
-      <Description>Radarr URL base (leave blank if none).</Description>
+      <Description>Radarr URL base if using a reverse proxy subpath, e.g. /radarr. Leave blank if none.</Description>
       <Display>advanced</Display>
       <Required>false</Required>
       <Mask>false</Mask>
@@ -177,7 +203,7 @@
     <Variable>
       <Name>LIDARR_HOST</Name>
       <Value></Value>
-      <Description>Lidarr hostname or IP.</Description>
+      <Description>Lidarr hostname or IP. Leave blank to configure in the web UI.</Description>
       <Display>always</Display>
       <Required>false</Required>
       <Mask>false</Mask>
@@ -193,7 +219,7 @@
     <Variable>
       <Name>LIDARR_APIKEY</Name>
       <Value></Value>
-      <Description>Lidarr API key (Settings › General).</Description>
+      <Description>Lidarr API key — found at Settings › General › API Key.</Description>
       <Display>always</Display>
       <Required>false</Required>
       <Mask>true</Mask>
@@ -201,23 +227,23 @@
     <Variable>
       <Name>LIDARR_URLBASE</Name>
       <Value></Value>
-      <Description>Lidarr URL base (leave blank if none).</Description>
+      <Description>Lidarr URL base if using a reverse proxy subpath, e.g. /lidarr. Leave blank if none.</Description>
       <Display>advanced</Display>
       <Required>false</Required>
       <Mask>false</Mask>
     </Variable>
 
-    <!-- ── Sportarr ──────────────────────────────────────────────────────── -->
+    <!-- ── Sportarr ── -->
     <Variable>
-      <n>SPORTARR_HOST</n>
+      <Name>SPORTARR_HOST</Name>
       <Value></Value>
-      <Description>Sportarr hostname or IP.</Description>
+      <Description>Sportarr hostname or IP. Leave blank to configure in the web UI.</Description>
       <Display>always</Display>
       <Required>false</Required>
       <Mask>false</Mask>
     </Variable>
     <Variable>
-      <n>SPORTARR_PORT</n>
+      <Name>SPORTARR_PORT</Name>
       <Value>1867</Value>
       <Description>Sportarr HTTP port (default: 1867).</Description>
       <Display>always</Display>
@@ -225,17 +251,17 @@
       <Mask>false</Mask>
     </Variable>
     <Variable>
-      <n>SPORTARR_APIKEY</n>
+      <Name>SPORTARR_APIKEY</Name>
       <Value></Value>
-      <Description>Sportarr API key (Settings › General).</Description>
+      <Description>Sportarr API key — found at Settings › General › API Key.</Description>
       <Display>always</Display>
       <Required>false</Required>
       <Mask>true</Mask>
     </Variable>
     <Variable>
-      <n>SPORTARR_URLBASE</n>
+      <Name>SPORTARR_URLBASE</Name>
       <Value></Value>
-      <Description>Sportarr URL base (leave blank if none).</Description>
+      <Description>Sportarr URL base if using a reverse proxy subpath, e.g. /sportarr. Leave blank if none.</Description>
       <Display>advanced</Display>
       <Required>false</Required>
       <Mask>false</Mask>
