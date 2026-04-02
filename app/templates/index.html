@@ -311,7 +311,8 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     <div class="phase" id="ph2"><div class="phase-num">2</div><div class="phase-label">Shutdown</div></div>
     <div class="phase" id="ph3"><div class="phase-num">3</div><div class="phase-label">Backup</div></div>
     <div class="phase" id="ph4"><div class="phase-num">4</div><div class="phase-label">Repair</div></div>
-    <div class="phase" id="ph5"><div class="phase-num">5</div><div class="phase-label">Complete</div></div>
+    <div class="phase" id="ph5"><div class="phase-num">5</div><div class="phase-label">Report</div></div>
+    <div class="phase" id="ph6"><div class="phase-num">6</div><div class="phase-label">Online</div></div>
   </div>
 
   <div class="panel">
@@ -758,6 +759,7 @@ function handleEntry(entry) {
     if (t.includes('step 3')||t.includes('backup'))    { setPhase(2,'done'); setPhase(3,'active'); }
     if (t.includes('step 4')||t.includes('repair'))    { setPhase(3,'done'); setPhase(4,'active'); }
     if (t.includes('step 5')||t.includes('report'))    { setPhase(4,'done'); setPhase(5,'active'); }
+    if (t.includes('step 6')||t.includes('restart'))   { setPhase(5,'done'); setPhase(6,'active'); }
     return;
   }
   if (entry.cls==='__done__') {
@@ -771,7 +773,7 @@ function handleEntry(entry) {
       document.getElementById('progressFill').style.width = '100%';
       document.getElementById('progressPct').textContent  = '100%';
       document.getElementById('progressLabel').textContent = d.dry_run ? 'Dry run complete.' : 'All operations complete.';
-      markAllPillsDone(); setPhase(5,'done');
+      markAllPillsDone(); setPhase(6,'done');
       setStatus(d.errors>0?'DONE WITH ERRORS':'COMPLETE', d.errors>0?'var(--warn)':'var(--ok)', false);
     } catch(_){}
     finishJob(); return;
@@ -790,7 +792,7 @@ function finishJob() {
 }
 
 function setPhase(n,state) { const el=document.getElementById('ph'+n); if(el) el.className='phase '+state; }
-function resetPhases() { for(let i=1;i<=5;i++) setPhase(i,''); }
+function resetPhases() { for(let i=1;i<=6;i++) setPhase(i,''); }
 
 function activatePill(partialId) {
   const match = opOrder.find(id=>id.startsWith(partialId)||partialId.startsWith(id.split('_')[0]));
