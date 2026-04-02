@@ -15,7 +15,7 @@ RUN pip install --upgrade "pip>=26.0" \
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="Starr" \
-      org.opencontainers.image.description="Web UI for repairing Sonarr, Radarr, and Lidarr SQLite databases" \
+      org.opencontainers.image.description="Web UI for repairing Sonarr, Radarr, Sportarr, and Lidarr SQLite databases" \
       org.opencontainers.image.url="https://github.com/krippler/starr-db-repair" \
       org.opencontainers.image.source="https://github.com/krippler/starr-db-repair" \
       org.opencontainers.image.licenses="MIT" \
