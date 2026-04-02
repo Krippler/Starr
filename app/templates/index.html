@@ -396,8 +396,8 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       <!-- Updated dynamically by updatePlaceholders() -->
       <strong id="warnTitle">Sonarr will be shut down before any repairs are performed</strong>
       The repair sequence calls <code>/api/v3/system/shutdown</code>, waits for the process to go offline,
-      creates a timestamped backup in <code>/backups</code>, then runs SQLite operations on the idle file.
-      After completion you must <strong>restart your app manually</strong> (or via docker/Unraid).
+      creates a timestamped backup in <code>/backups</code>, runs SQLite operations on the idle file,
+      then waits for the app to come back online automatically.
       Do not run while active downloads are in progress.
     </div>
   </div>
