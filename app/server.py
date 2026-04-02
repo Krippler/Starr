@@ -204,7 +204,7 @@ def _shutdown_app(host, port, apikey, urlbase=""):
 # ---------------------------------------------------------------------------
 def _step_preflight(cfg) -> str | None:
     """Returns resolved db path or None on failure."""
-    emit("PHASE", "── Step 1/5  Preflight ──────────────────────────────────", "phase")
+    emit("PHASE", "── Step 1/6  Preflight ──────────────────────────────────", "phase")
     host, port, apikey, urlbase = cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", "")
     st = _get_status(host, port, apikey, urlbase)
     if not st:
@@ -238,7 +238,7 @@ def _step_preflight(cfg) -> str | None:
 
 
 def _step_shutdown(cfg) -> bool:
-    emit("PHASE", "── Step 2/5  Shutdown ───────────────────────────────────", "phase")
+    emit("PHASE", "── Step 2/6  Shutdown ───────────────────────────────────", "phase")
     if cfg.get("dry_run"):
         emit("DRY", "[DRY] Would POST /api/v3/system/shutdown", "dry"); return True
     if cfg.get("skip_shutdown"):
@@ -265,7 +265,7 @@ def _step_shutdown(cfg) -> bool:
 
 
 def _step_backup(cfg, db_path: str) -> str | None:
-    emit("PHASE", "── Step 3/5  Backup ─────────────────────────────────────", "phase")
+    emit("PHASE", "── Step 3/6  Backup ─────────────────────────────────────", "phase")
     if cfg.get("no_backup"):
         emit("WARN", "Backup skipped (no_backup=true).", "warn"); return None
 
@@ -300,7 +300,7 @@ def _step_backup(cfg, db_path: str) -> str | None:
 
 
 def _step_repair(cfg, db_path: str) -> dict:
-    emit("PHASE", "── Step 4/5  SQLite Repairs ─────────────────────────────", "phase")
+    emit("PHASE", "── Step 4/6  SQLite Repairs ─────────────────────────────", "phase")
     results = {}
     ops = cfg.get("ops") or ALL_OPS
 
@@ -387,7 +387,7 @@ def _step_repair(cfg, db_path: str) -> dict:
 
 
 def _step_report(cfg, backup_path, results) -> None:
-    emit("PHASE", "── Step 5/5  Report ─────────────────────────────────────", "phase")
+    emit("PHASE", "── Step 5/6  Report ─────────────────────────────────────", "phase")
     if cfg.get("dry_run"):
         emit("DRY", "DRY RUN complete – zero disk changes.", "dry")
     else:
@@ -398,17 +398,68 @@ def _step_report(cfg, backup_path, results) -> None:
         if backup_path:
             emit("OK",   f"Backup: {backup_path}", "ok")
             emit("INFO", "Delete backup once app is confirmed working.", "info")
-        emit("WARN", f"Restart {cfg['app'].capitalize()} to bring it back online.", "warn")
-        emit("SYS",  f"  docker restart {cfg['app']}", "sys")
-        emit("SYS",   "  Or restart via your Unraid / NAS app manager.", "sys")
 
-    ok_n  = sum(1 for s, _ in results.values() if s in ("ok","fixed")) if not cfg.get("dry_run") else len(results)
-    err_n = sum(1 for s, _ in results.values() if s in ("issues","error")) if not cfg.get("dry_run") else 0
+
+def _step_restart(cfg, results) -> None:
+    """Step 6 -- wait for the app to come back online.
+
+    Relies on Docker restart policy (restart: unless-stopped) to bring
+    the container back up automatically after shutdown. We poll the
+    status endpoint until the app responds or we time out.
+    Skipped entirely on dry-run or if skip_shutdown was set.
+    """
+    emit("PHASE", "── Step 6/6  Restart ────────────────────────────────────", "phase")
+
+    ok_n  = sum(1 for s, _ in results.values() if s in ("ok", "fixed"))
+    err_n = sum(1 for s, _ in results.values() if s in ("issues", "error"))
+
+    if cfg.get("dry_run"):
+        emit("DRY", "DRY RUN – skipping restart wait.", "dry")
+        emit("__DONE__", json.dumps({
+            "fixed": ok_n, "errors": err_n,
+            "elapsed": _elapsed(), "dry_run": True,
+        }), "__done__")
+        return
+
+    if cfg.get("skip_shutdown"):
+        emit("INFO", "Shutdown was skipped — app should still be running.", "info")
+        emit("__DONE__", json.dumps({
+            "fixed": ok_n, "errors": err_n,
+            "elapsed": _elapsed(), "dry_run": False,
+        }), "__done__")
+        return
+
+    host, port, apikey, urlbase = cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", "")
+    emit("INFO", f"Waiting for {cfg['app'].capitalize()} to come back online...", "info")
+    emit("INFO", "(Docker restart policy will bring it up automatically)", "info")
+
+    deadline = time.time() + 180   # 3-minute timeout
+    attempt  = 0
+    while time.time() < deadline:
+        if _job.aborted:
+            emit("WARN", "Aborted during restart wait.", "warn")
+            break
+        time.sleep(5)
+        attempt += 1
+        st = _get_status(host, port, apikey, urlbase, timeout=3)
+        if st:
+            emit("OK", f"{cfg['app'].capitalize()} is online — v{st.get('version','?')} OK", "ok")
+            emit("OK", "Repair complete. All done!", "ok")
+            emit("__DONE__", json.dumps({
+                "fixed": ok_n, "errors": err_n,
+                "elapsed": _elapsed(), "dry_run": False,
+            }), "__done__")
+            return
+        if attempt % 3 == 0:
+            remaining = int(deadline - time.time())
+            emit("INFO", f"Still waiting... ({remaining}s remaining)", "info")
+
+    emit("WARN", f"{cfg['app'].capitalize()} did not come back within 3 minutes.", "warn")
+    emit("WARN", "It may still be starting up — check your container manager.", "warn")
+    emit("SYS",  f"  docker restart {cfg['app']}", "sys")
     emit("__DONE__", json.dumps({
-        "fixed":   ok_n,
-        "errors":  err_n,
-        "elapsed": _elapsed(),
-        "dry_run": cfg.get("dry_run", False),
+        "fixed": ok_n, "errors": err_n,
+        "elapsed": _elapsed(), "dry_run": False,
     }), "__done__")
 
 
@@ -440,6 +491,8 @@ def _repair_worker(cfg: dict) -> None:
         results = _step_repair(cfg, db_path)
 
         _step_report(cfg, backup, results)
+
+        _step_restart(cfg, results)
 
         ok_n  = sum(1 for s, _ in results.values() if s in ("ok", "fixed"))
         err_n = sum(1 for s, _ in results.values() if s in ("issues", "error"))
