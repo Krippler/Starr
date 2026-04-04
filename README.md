@@ -6,7 +6,7 @@
 [![CI](https://github.com/Krippler/Starr/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Krippler/Starr/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
-**Web UI tool for diagnosing and repairing Sonarr, Radarr, and Lidarr SQLite databases.**
+**Web UI tool for diagnosing and repairing Sonarr, Radarr, Sportarr, and Lidarr SQLite databases.**
 
 > Safely shuts down your app, creates a timestamped backup, runs SQLite PRAGMAs on the idle database, streams every log line live to the browser, then reminds you to restart.
 
@@ -22,7 +22,7 @@
 - **Auto-backup** before every repair, with configurable retention (default 7 days)
 - **6 SQLite operations**: integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE
 - **Dry-run mode** — preview every step without making changes
-- **Supports all four Starr apps** — Sonarr · Radarr · Lidarr · Sportarr
+- **Supports four *arr apps** — Sonarr · Radarr · Lidarr · Sportarr
 - **Multi-arch Docker image** — `linux/amd64` + `linux/arm64` (Unraid, Synology, RPi)
 - **Unraid Community Apps template** included
 
