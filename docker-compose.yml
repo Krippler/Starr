@@ -11,7 +11,7 @@ version: "3.9"
 
 services:
   Starr:
-    image: krippler52/Starr:latest
+    image: krippler52/starr:latest
     # Or build locally:
     # build: .
     container_name: Starr
@@ -57,10 +57,11 @@ services:
     volumes:
       # Mount your Starr app config dirs so the container can read the .db files
       # Adjust paths to match your setup:
-      - ${SONARR_CONFIG:-/opt/appdata/sonarr}:/data/sonarr:ro
-      - ${RADARR_CONFIG:-/opt/appdata/radarr}:/data/radarr:ro
-      - ${LIDARR_CONFIG:-/opt/appdata/lidarr}:/data/lidarr:ro
-      - ${SPORTARR_CONFIG:-/opt/appdata/Sportarr}:/data/sportarr:ro
+      # rw is required: VACUUM / REINDEX / FK repair write to the source DB
+      - ${SONARR_CONFIG:-/opt/appdata/sonarr}:/data/sonarr:rw
+      - ${RADARR_CONFIG:-/opt/appdata/radarr}:/data/radarr:rw
+      - ${LIDARR_CONFIG:-/opt/appdata/lidarr}:/data/lidarr:rw
+      - ${SPORTARR_CONFIG:-/opt/appdata/sportarr}:/data/sportarr:rw
       # Backup output
       - ${BACKUP_PATH:-./backups}:/backups
 

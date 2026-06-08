@@ -221,15 +221,23 @@ def _step_preflight(cfg) -> str | None:
         db_path = str(Path(app_data) / APP_DEFAULTS[cfg["app"]]["dbname"])
         emit("WARN", f"db_path not supplied, auto-detected: {db_path}", "warn")
 
-    # Also check the container-mounted /data path
+    # Also check the container-mounted /data path. The documented Unraid /
+    # docker-compose layout mounts the app's config dir at /data/<app>/, so
+    # try /data/<app>/<app>.db first, then fall back to a flat /data/<app>.db.
     if not Path(db_path).exists():
-        mounted = app.config["DB_DIR"] / APP_DEFAULTS[cfg["app"]]["dbname"]
-        if mounted.exists():
-            db_path = str(mounted)
-            emit("INFO", f"Using mounted path: {db_path}", "info")
+        dbname = APP_DEFAULTS[cfg["app"]]["dbname"]
+        candidates = [
+            app.config["DB_DIR"] / cfg["app"] / dbname,
+            app.config["DB_DIR"] / dbname,
+        ]
+        for cand in candidates:
+            if cand.exists():
+                db_path = str(cand)
+                emit("INFO", f"Using mounted path: {db_path}", "info")
+                break
         else:
             emit("ERR", f"DB file not found: {db_path}", "err")
-            emit("ERR", "Mount the app's config folder to /data in the container.", "err")
+            emit("ERR", "Mount the app's config folder to /data/<app> in the container.", "err")
             return None
 
     mb = Path(db_path).stat().st_size / 1_048_576
