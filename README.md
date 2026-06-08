@@ -10,8 +10,6 @@
 
 > Safely shuts down your app, creates a timestamped backup, runs SQLite PRAGMAs on the idle database, streams every log line live to the browser, then reminds you to restart.
 
-![Dashboard screenshot](docs/screenshot.png)
-
 ---
 
 ## ✨ Features

@@ -21,7 +21,6 @@
   <Category>Tools: MediaServer:Other</Category>
   <WebUI>http://[IP]:[PORT:8877]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml</TemplateURL>
-  <Icon>https://raw.githubusercontent.com/Krippler/Starr/main/docs/icon.png</Icon>
   <ExtraParams>--restart=unless-stopped</ExtraParams>
   <Support>https://github.com/Krippler/Starr/issues</Support>
   <ReadmeURL>https://github.com/Krippler/Starr/blob/main/README.md</ReadmeURL>
