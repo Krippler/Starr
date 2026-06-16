@@ -59,6 +59,13 @@ jobs:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
             krippler52/starr
+          # Emit clean, pinnable tags. A git tag v1.0.4 produces:
+          #   1.0.4 (full), 1.0 (minor), 1 (major), and latest (default branch).
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
         id: build-and-push
