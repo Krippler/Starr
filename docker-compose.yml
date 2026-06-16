@@ -1,5 +1,3 @@
-version: "3.9"
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Starr DB Repair  —  docker-compose
 #
@@ -10,11 +8,11 @@ version: "3.9"
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
-  Starr:
+  starr:
     image: krippler52/starr:latest
     # Or build locally:
     # build: .
-    container_name: Starr
+    container_name: starr
     restart: unless-stopped
 
     ports:
