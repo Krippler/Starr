@@ -21,7 +21,7 @@
 - **6 SQLite operations**: integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE
 - **Dry-run mode** — preview every step without making changes
 - **Supports four *arr apps** — Sonarr · Radarr · Lidarr · Sportarr
-- **Multi-arch Docker image** — `linux/amd64` + `linux/arm64` (Unraid, Synology, RPi)
+- **Docker image** — `linux/amd64` (Unraid, Synology, most x86 NAS), published to Docker Hub + GHCR and signed with cosign
 - **Unraid Community Apps template** included
 
 ---
@@ -53,8 +53,16 @@ docker run -d \
   -e SONARR_HOST=sonarr \
   -e SONARR_APIKEY=your-api-key \
   -e SECRET_KEY=your-secret-here \
-  krippler52/starr:latest
+  krippler52/starr:1.0.4
 ```
+
+**Image tags** — published to both Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`):
+
+| Tag | Use |
+|---|---|
+| `1.0.4` | exact version — recommended pin for production |
+| `1.0` / `1` | floating minor / major |
+| `latest` | newest release |
 
 ---
 
@@ -68,8 +76,10 @@ docker run -d \
 | `/data/sportarr` | Sportarr config directory (must contain `sportarr.db`) |
 | `/backups`       | Backup output — timestamped `.db` copies stored here |
 
-> **Mount mode:** `rw` is required so the container can read the DB and write the backup.  
-> The original `.db` is never modified until the app is shut down.
+> **Mount mode:** `rw` is **required** — the repair operations (VACUUM, REINDEX, foreign-key cleanup, WAL checkpoint) write directly to the source `.db`.  
+> The original `.db` is never touched until the app has been shut down and a timestamped backup has been written to `/backups`.
+
+> **Mount layout:** mount each app's config directory at `/data/<app>` (e.g. `/data/sonarr`). Starr auto-detects the database at `/data/<app>/<app>.db`, so you normally don't need to set a DB path by hand.
 
 ---
 
@@ -123,13 +133,17 @@ All connection settings can also be entered directly in the web UI — env vars 
 2. Shutdown    →  POST /api/v3/system/shutdown, poll until offline
 3. Backup      →  Copy .db → /backups/appname_YYYYMMDD_HHMMSS.db
 4. SQLite ops  →  Run selected PRAGMAs on the idle file
-5. Report      →  Summary + restart reminder
+5. Report      →  Summary of operations + backup location
+6. Restart     →  Wait for the app to come back online, then confirm
 ```
 
-After the repair completes you **must restart your app manually**:
+In **step 6** Starr polls the app's status endpoint and waits for it to come
+back online — this relies on your container restart policy
+(`--restart unless-stopped`) bringing the app back up automatically. If the app
+doesn't return within 3 minutes, restart it yourself:
 
 ```bash
-docker restart sonarr     # or radarr / lidarr
+docker restart sonarr     # or radarr / lidarr / sportarr
 # Unraid: Apps → sonarr → Start
 # systemd: systemctl restart sonarr
 ```
@@ -140,9 +154,10 @@ docker restart sonarr     # or radarr / lidarr
 
 1. Open **Apps** in the Unraid UI
 2. Search for **Starr DB Repair**
-3. Click Install — the template pre-fills all paths and fields
-4. Set your API keys in the template form _(they are masked)_
-5. Click **Apply**
+3. Click Install — the template pre-fills all path mappings and fields
+4. Set a **SECRET_KEY** _(required)_ and your API keys _(masked)_ in the form
+5. Adjust the `/data/<app>` paths to match your appdata layout
+6. Click **Apply**
 
 Or manually add the template URL in Apps → Settings:
 ```
@@ -215,18 +230,18 @@ Starr/
 │   ├── requirements.txt
 │   └── templates/
 │       └── index.html       # Dashboard web UI
-├── docker/                  # Extra Docker helpers
 ├── templates/
 │   └── unraid.xml           # Unraid Community Apps template
-├── docs/
-│   └── screenshot.png
 ├── tests/
+│   └── test_server.py       # pytest suite
 ├── .github/
 │   └── workflows/
-│       └── docker-publish.yml   # CI/CD → Docker Hub + GHCR
+│       └── docker-publish.yml   # CI/CD → Docker Hub + GHCR (cosign-signed)
 ├── Dockerfile
 ├── docker-compose.yml
 ├── .env.example
+├── PUBLISHING.md
+├── LICENSE
 └── README.md
 ```
 
@@ -236,9 +251,9 @@ Starr/
 
 - The container runs as **non-root** (UID 1000)
 - API keys set via env vars are **never logged or exposed** in the web UI
-- The web UI is protected by `SECRET_KEY` — set this in your `.env` file. The dashboard will display a warning if the default key is still in use
+- The web UI is protected by `SECRET_KEY` — set this in your `.env` file (or the Unraid form, where it is required). If left unset the dashboard runs **unauthenticated** and logs a warning on every request, so always set it on a shared network
 - Place behind a reverse proxy with additional auth (Authelia, Authentik, nginx basic auth) if exposed beyond your LAN
-- The Docker image is scanned with **Docker Scout** on every release
+- Published images are **signed with cosign** (keyless / Sigstore) on every release — verify with `cosign verify`
 
 ---
 
