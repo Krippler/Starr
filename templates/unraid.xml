@@ -3,7 +3,7 @@
 
   <!-- ── Basic metadata ─────────────────────────────────────────────────── -->
   <Name>Starr</Name>
-  <Repository>krippler52/starr</Repository>
+  <Repository>krippler52/starr:1.0.4</Repository>
   <Registry>https://hub.docker.com/r/krippler52/starr</Registry>
   <GitHub>https://github.com/Krippler/Starr</GitHub>
   <Project>https://github.com/Krippler/Starr</Project>
@@ -18,7 +18,7 @@
   </Overview>
 
   <!-- ── Appearance ─────────────────────────────────────────────────────── -->
-  <Category>Tools: MediaServer:Other</Category>
+  <Category>Tools: MediaApp:Other</Category>
   <WebUI>http://[IP]:[PORT:8877]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml</TemplateURL>
   <ExtraParams>--restart=unless-stopped</ExtraParams>
@@ -96,7 +96,7 @@
       <Value></Value>
       <Description>Web UI access key — set this to a strong random value to protect the dashboard. Anyone who can reach port 8877 can use the UI without this set.</Description>
       <Display>always</Display>
-      <Required>false</Required>
+      <Required>true</Required>
       <Mask>true</Mask>
     </Variable>
 
