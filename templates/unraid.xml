@@ -3,7 +3,7 @@
 
   <!-- ── Basic metadata ─────────────────────────────────────────────────── -->
   <Name>Starr</Name>
-  <Repository>krippler52/starr:1.0.4</Repository>
+  <Repository>krippler52/starr:latest</Repository>
   <Registry>https://hub.docker.com/r/krippler52/starr</Registry>
   <GitHub>https://github.com/Krippler/Starr</GitHub>
   <Project>https://github.com/Krippler/Starr</Project>
