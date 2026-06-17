@@ -348,7 +348,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         </label>
         <input id="webkey" type="password" class="auth-field"
                placeholder="Enter your SECRET_KEY value"
-               oninput="saveWebKey()"
+               oninput="onWebKeyInput()"
                autocomplete="current-password">
       </div>
       <div class="action-row">
@@ -589,12 +589,48 @@ function boot() {
   loadBackups();
   checkDefaultKey();
 
-  fetch('/api/apps', { headers: authHeaders() })
-    .then(r => { if (r.status === 401) { handle401(); return null; } return r.json(); })
+  loadEnvConfig({ logErrors: true });
+}
+
+// Tracks the last Web Key we successfully loaded config with, so the
+// debounced key handler doesn't re-fetch / re-log on every keystroke.
+let lastLoadedKey = null;
+let webKeyDebounce = null;
+
+// Fetch env-configured connections and pre-fill the form for the current app.
+// Returns a promise resolving to true on success, false on auth failure / error.
+function loadEnvConfig({ logErrors = false } = {}) {
+  return fetch('/api/apps', { headers: authHeaders() })
+    .then(r => {
+      if (r.status === 401) { if (logErrors) handle401(); return null; }
+      return r.ok ? r.json() : null;
+    })
     .then(apps => {
-      if (!apps) return;
+      if (!apps) return false;
       applyEnvConfig(apps, currentApp);
-    }).catch(() => {});
+      lastLoadedKey = getWebKey();
+      return true;
+    })
+    .catch(() => false);
+}
+
+// Called on every keystroke in the Web Key field. Persists the key, then —
+// once typing settles — tries to load config so the form fills in without a
+// manual page refresh. Silent on failure so partial keys don't spam errors.
+function onWebKeyInput() {
+  saveWebKey();
+  const key = getWebKey();
+  clearTimeout(webKeyDebounce);
+  if (!key || key === lastLoadedKey) return;
+  webKeyDebounce = setTimeout(() => {
+    loadEnvConfig({ logErrors: false }).then(ok => {
+      if (ok) {
+        setStatus('READY', 'var(--ok)', false);
+        loadBackups();
+        logLine('SYS', 'Web key accepted — configuration loaded.', 'sys');
+      }
+    });
+  }, 500);
 }
 
 // ── Env config pre-fill ───────────────────────────────────────────────────────
@@ -655,12 +691,7 @@ function switchApp(app) {
   logLine('SYS', `Switched to ${cfg.name}. Port set to ${cfg.port}.`, 'sys');
 
   // Pre-fill from env if available
-  fetch('/api/apps', { headers: authHeaders() })
-    .then(r => r.ok ? r.json() : null)
-    .then(apps => {
-      if (!apps) return;
-      applyEnvConfig(apps, app);
-    }).catch(() => {});
+  loadEnvConfig({ logErrors: false });
 }
 
 // ── Ops ───────────────────────────────────────────────────────────────────────
