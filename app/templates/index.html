@@ -606,14 +606,12 @@ function applyEnvConfig(apps, app) {
   if (a.host)    document.getElementById('host').value    = a.host;
   if (a.port)    document.getElementById('port').value    = a.port;
   if (a.urlbase) document.getElementById('urlbase').value = a.urlbase;
-  if (a.configured) {
-    document.getElementById('apikey').placeholder = '✓ Loaded from environment — leave blank to use';
-  }
+  if (a.apikey)  document.getElementById('apikey').value  = a.apikey;
   const loaded = [];
-  if (a.host)       loaded.push('host');
-  if (a.port)       loaded.push('port');
-  if (a.urlbase)    loaded.push('urlbase');
-  if (a.configured) loaded.push('apikey');
+  if (a.host)    loaded.push('host');
+  if (a.port)    loaded.push('port');
+  if (a.urlbase) loaded.push('urlbase');
+  if (a.apikey)  loaded.push('apikey');
   if (loaded.length) {
     logLine('SYS', `${app.toUpperCase()} config loaded from environment: ${loaded.join(', ')}`, 'sys');
   }
