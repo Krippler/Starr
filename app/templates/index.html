@@ -371,13 +371,18 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
           <input type="checkbox" id="dryRunCheck" style="accent-color:var(--dry)">
           <span style="color:var(--dry)">Dry Run</span>
         </label>
-        <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer">
+        <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer"
+               title="Docker/Unraid: a container restart policy (restart: unless-stopped) brings the app back seconds after its shutdown API stops it. The reliable flow is to stop the app's CONTAINER yourself, then enable this so Starr repairs the idle DB without trying to shut the app down.">
           <input type="checkbox" id="skipShutdownCheck">
           Skip Shutdown
         </label>
       </div>
     </div>
     <div class="panel-body">
+      <div id="skipShutdownHint" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px">
+        <strong>Docker / Unraid:</strong> the app's restart policy will bring it back online seconds after the shutdown API stops it.
+        For a safe repair, <strong>stop the app's container first</strong> (e.g. <code>docker stop sonarr</code>), then keep this checked so Starr repairs the idle database directly. Start the container again when the repair finishes.
+      </div>
       <div class="ops-header">
         <span style="font-size:10px;color:var(--muted)" id="selCount">0 operations selected</span>
         <div style="display:flex;gap:10px">
@@ -590,6 +595,13 @@ function boot() {
   checkDefaultKey();
 
   loadEnvConfig({ logErrors: true });
+
+  // Show the Docker/Unraid guidance only while "Skip Shutdown" is checked.
+  const skip = document.getElementById('skipShutdownCheck');
+  const hint = document.getElementById('skipShutdownHint');
+  const syncHint = () => { hint.style.display = skip.checked ? 'block' : 'none'; };
+  skip.addEventListener('change', syncHint);
+  syncHint();
 }
 
 // Tracks the last Web Key we successfully loaded config with, so the
