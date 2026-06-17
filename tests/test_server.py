@@ -132,8 +132,9 @@ def test_api_apps_empty(client):
     assert isinstance(json.loads(r.data), list)
 
 
-def test_api_apps_returns_urlbase_and_masks_apikey(client):
-    """All env-configured fields should round-trip; apikey is never sent verbatim."""
+def test_api_apps_returns_full_config(client):
+    """All env-configured fields, including the apikey, round-trip so the
+    dashboard form can pre-fill them. The endpoint is gated by SECRET_KEY."""
     srv.app.config["SONARR_HOST"]    = "sonarr.local"
     srv.app.config["SONARR_PORT"]    = 8989
     srv.app.config["SONARR_APIKEY"]  = "supersecret"
@@ -145,8 +146,7 @@ def test_api_apps_returns_urlbase_and_masks_apikey(client):
         assert sonarr["port"]       == 8989
         assert sonarr["urlbase"]    == "/sonarr"
         assert sonarr["configured"] is True
-        assert sonarr["apikey"]     == "***"          # masked
-        assert "supersecret" not in client.get("/api/apps").data.decode()
+        assert sonarr["apikey"]     == "supersecret"
     finally:
         srv.app.config["SONARR_HOST"]    = ""
         srv.app.config["SONARR_APIKEY"]  = ""

@@ -560,8 +560,13 @@ def api_apps():
 
     Returns one entry per app whenever any of host / apikey / urlbase has
     been set via environment, so the UI can pre-fill the form even if the
-    user only configured a subset (e.g. apikey but no host). The apikey
-    value itself is never sent to the client.
+    user only configured a subset (e.g. apikey but no host).
+
+    The *arr API keys ARE returned in full so the dashboard form can
+    pre-fill them. This endpoint is gated by the dashboard's own
+    SECRET_KEY, so only an authenticated session can read them — the
+    same posture as the *arr apps' own /api/v3/system/status endpoints.
+    Do NOT expose this endpoint behind a weak SECRET_KEY.
     """
     apps = []
     for name in ("sonarr", "radarr", "lidarr", "sportarr"):
@@ -576,7 +581,7 @@ def api_apps():
             "host":       host,
             "port":       app.config.get(f"{upper}_PORT"),
             "urlbase":    urlbase,
-            "apikey":     "***" if apikey else "",
+            "apikey":     apikey,
             "configured": bool(apikey),
         })
     return jsonify(apps)
