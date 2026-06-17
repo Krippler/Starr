@@ -216,3 +216,33 @@ def test_sportarr_in_app_defaults():
     assert "sportarr" in srv.APP_DEFAULTS
     assert srv.APP_DEFAULTS["sportarr"]["port"] == 1867
     assert srv.APP_DEFAULTS["sportarr"]["dbname"] == "sportarr.db"
+
+
+def test_repair_worker_aborts_when_backup_fails(monkeypatch, tmp_path):
+    """If _step_backup returns None on a non-dry, non-no_backup run, the
+    worker MUST abort before running any SQLite operations on the source DB."""
+    srv._job.reset()
+    srv.app.config["BACKUP_DIR"] = tmp_path / "backups"
+    (tmp_path / "backups").mkdir()
+
+    # Make a real source DB so _step_repair would otherwise mutate it
+    db = tmp_path / "src.db"
+    import sqlite3
+    sqlite3.connect(str(db)).execute("CREATE TABLE t(x)").connection.commit()
+
+    monkeypatch.setattr(srv, "_step_preflight", lambda cfg: str(db))
+    monkeypatch.setattr(srv, "_step_shutdown",  lambda cfg: True)
+    monkeypatch.setattr(srv, "_step_backup",    lambda cfg, p: None)   # simulate failure
+    monkeypatch.setattr(srv, "_step_restart",   lambda cfg, r: None)
+
+    repair_calls = []
+    def fail_if_called(cfg, p):
+        repair_calls.append((cfg, p))
+        return {}
+    monkeypatch.setattr(srv, "_step_repair", fail_if_called)
+
+    srv._repair_worker({"app": "sonarr", "host": "x", "port": 1, "apikey": "k", "ops": ["integrity"]})
+
+    assert repair_calls == [], "Repair must NOT run when backup fails"
+    assert srv._job.result["status"] == "error"
+    assert "backup" in srv._job.result["message"].lower()

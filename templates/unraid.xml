@@ -54,6 +54,14 @@
           Description="Where timestamped database backups are stored. Backups are auto-pruned based on MAX_BACKUP_AGE_DAYS."
           Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/starr/backups</Config>
 
+  <!-- ── User / group (Unraid: 99:100 nobody:users) ─────────────────────── -->
+  <Config Name="PUID" Target="PUID" Default="99" Mode=""
+          Description="UID the container runs as. Must match (or be in the same group as) the UID that owns your *arr config dirs (Sonarr, Radarr, etc.) so VACUUM/REINDEX can write the source DB. Unraid default: 99 (nobody)."
+          Type="Variable" Display="always" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode=""
+          Description="GID the container runs as. Unraid default: 100 (users)."
+          Type="Variable" Display="always" Required="true" Mask="false">100</Config>
+
   <!-- ── Security ───────────────────────────────────────────────────────── -->
   <Config Name="SECRET_KEY" Target="SECRET_KEY" Default="" Mode=""
           Description="Web UI access key — set this to a strong random value to protect the dashboard. Anyone who can reach the port can use the UI without this set."

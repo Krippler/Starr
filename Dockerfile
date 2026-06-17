@@ -21,12 +21,13 @@ LABEL org.opencontainers.image.title="Starr" \
       org.opencontainers.image.licenses="MIT" \
       maintainer="jasoncatcher@gmail.com"
 
-# Patch OS packages and upgrade pip in the runtime image (where Scout scans)
+# Patch OS packages, install gosu for privilege drop, upgrade pip
 RUN apt-get update && apt-get upgrade -y --no-install-recommends \
+ && apt-get install -y --no-install-recommends gosu \
  && apt-get clean && rm -rf /var/lib/apt/lists/* \
  && pip install --upgrade "pip>=26.0"
 
-# Non-root user for security
+# Non-root user (UID adjusted at runtime via PUID/PGID env vars)
 RUN groupadd -r starr && useradd -r -g starr -u 1000 starr
 
 # Runtime directories
@@ -36,13 +37,15 @@ RUN mkdir -p /app /data /backups /config \
 # Copy installed packages from builder
 COPY --from=builder /install /usr/local
 
-# Copy application code
+# Copy application code + entrypoint
 COPY --chown=starr:starr app/ /app/
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 WORKDIR /app
 
-# Switch to non-root
-USER starr
+# Entrypoint runs as root just long enough to reconcile PUID/PGID and chown
+# /backups, then drops to starr via gosu.
 
 # Expose web UI port
 EXPOSE 8877
@@ -67,6 +70,8 @@ ENV PORT=8877 \
     MAX_BACKUP_AGE_DAYS=7 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
+
+ENTRYPOINT ["/entrypoint.sh"]
 
 # Launch with gunicorn (1 worker, threaded for SSE)
 CMD ["gunicorn", \
