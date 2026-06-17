@@ -335,7 +335,12 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         </div>
       </div>
       <div class="form-grid" style="margin-bottom:14px">
-        <div class="field" style="grid-column:1/-1">
+        <div class="field">
+          <label>Container Name (optional — Docker socket)</label>
+          <!-- placeholder updated dynamically by updatePlaceholders() -->
+          <input id="containerName" placeholder="sonarr">
+        </div>
+        <div class="field">
           <label>Database Path (optional — auto-detected)</label>
           <!-- placeholder updated dynamically by updatePlaceholders() -->
           <input id="dbpath" placeholder="/config/sonarr.db  or leave blank to auto-detect">
@@ -564,8 +569,9 @@ function handle401() {
 // Called on boot and every time the user switches app tab.
 function updatePlaceholders(app) {
   const cfg = APPS[app];
-  document.getElementById('urlbase').placeholder = cfg.urlbasePlaceholder;
-  document.getElementById('dbpath').placeholder  = cfg.dbPlaceholder + '  or leave blank to auto-detect';
+  document.getElementById('urlbase').placeholder       = cfg.urlbasePlaceholder;
+  document.getElementById('dbpath').placeholder        = cfg.dbPlaceholder + '  or leave blank to auto-detect';
+  document.getElementById('containerName').placeholder = app;     // e.g. 'sonarr'
   document.getElementById('warnTitle').textContent =
     cfg.name.charAt(0) + cfg.name.slice(1).toLowerCase() +
     ' will be shut down before any repairs are performed';
@@ -654,12 +660,14 @@ function applyEnvConfig(apps, app) {
   if (a.host)    document.getElementById('host').value    = a.host;
   if (a.port)    document.getElementById('port').value    = a.port;
   if (a.urlbase) document.getElementById('urlbase').value = a.urlbase;
+  if (a.container_name) document.getElementById('containerName').value = a.container_name;
   if (a.apikey)  document.getElementById('apikey').value  = a.apikey;
   const loaded = [];
-  if (a.host)    loaded.push('host');
-  if (a.port)    loaded.push('port');
-  if (a.urlbase) loaded.push('urlbase');
-  if (a.apikey)  loaded.push('apikey');
+  if (a.host)           loaded.push('host');
+  if (a.port)           loaded.push('port');
+  if (a.urlbase)        loaded.push('urlbase');
+  if (a.container_name) loaded.push('container');
+  if (a.apikey)         loaded.push('apikey');
   if (loaded.length) {
     logLine('SYS', `${app.toUpperCase()} config loaded from environment: ${loaded.join(', ')}`, 'sys');
   }
@@ -690,8 +698,9 @@ function switchApp(app) {
   updatePlaceholders(app);
 
   // Clear the user-entered optional fields so previous app's values don't carry over
-  document.getElementById('urlbase').value = '';
-  document.getElementById('dbpath').value  = '';
+  document.getElementById('urlbase').value       = '';
+  document.getElementById('dbpath').value        = '';
+  document.getElementById('containerName').value = '';
 
   // Reset UI state
   resetPhases();
@@ -769,6 +778,7 @@ async function startRepair() {
     apikey,
     urlbase: document.getElementById('urlbase').value.trim(),
     db_path: document.getElementById('dbpath').value.trim(),
+    container_name: document.getElementById('containerName').value.trim(),
     ops: [...selectedOps],
     dry_run: document.getElementById('dryRunCheck').checked,
     skip_shutdown: document.getElementById('skipShutdownCheck').checked,

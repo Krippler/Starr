@@ -57,18 +57,22 @@ class Config:
     SONARR_PORT         = int(os.environ.get("SONARR_PORT", "8989"))
     SONARR_APIKEY       = os.environ.get("SONARR_APIKEY", "")
     SONARR_URLBASE      = os.environ.get("SONARR_URLBASE", "")
+    SONARR_CONTAINER    = os.environ.get("SONARR_CONTAINER", "")
     RADARR_HOST         = os.environ.get("RADARR_HOST", "")
     RADARR_PORT         = int(os.environ.get("RADARR_PORT", "7878"))
     RADARR_APIKEY       = os.environ.get("RADARR_APIKEY", "")
     RADARR_URLBASE      = os.environ.get("RADARR_URLBASE", "")
+    RADARR_CONTAINER    = os.environ.get("RADARR_CONTAINER", "")
     LIDARR_HOST         = os.environ.get("LIDARR_HOST", "")
     LIDARR_PORT         = int(os.environ.get("LIDARR_PORT", "8686"))
     LIDARR_APIKEY       = os.environ.get("LIDARR_APIKEY", "")
     LIDARR_URLBASE      = os.environ.get("LIDARR_URLBASE", "")
+    LIDARR_CONTAINER    = os.environ.get("LIDARR_CONTAINER", "")
     SPORTARR_HOST       = os.environ.get("SPORTARR_HOST", "")
     SPORTARR_PORT       = int(os.environ.get("SPORTARR_PORT", "1867"))
     SPORTARR_APIKEY     = os.environ.get("SPORTARR_APIKEY", "")
     SPORTARR_URLBASE    = os.environ.get("SPORTARR_URLBASE", "")
+    SPORTARR_CONTAINER  = os.environ.get("SPORTARR_CONTAINER", "")
 
 app.config.from_object(Config)
 logging.getLogger().setLevel(app.config["LOG_LEVEL"])
@@ -206,6 +210,45 @@ def _shutdown_app(host, port, apikey, urlbase=""):
 
 
 # ---------------------------------------------------------------------------
+# Docker helpers (used when the user provides a container_name AND the
+# /var/run/docker.sock is mounted). docker is an optional dep — handle absence.
+# ---------------------------------------------------------------------------
+try:
+    import docker as _docker_sdk          # noqa: F401
+    _HAVE_DOCKER_SDK = True
+except ImportError:
+    _HAVE_DOCKER_SDK = False
+
+
+def _docker_client():
+    """Return a docker.DockerClient if the SDK is installed AND we can talk to
+    the daemon (socket mounted, user in the right group). Returns None on any
+    failure — callers must handle the fallback path."""
+    if not _HAVE_DOCKER_SDK:
+        return None
+    try:
+        client = _docker_sdk.from_env(timeout=10)
+        client.ping()
+        return client
+    except Exception as e:
+        log.debug("Docker client unavailable: %s", e)
+        return None
+
+
+def _docker_container(name):
+    """Look up a container by name. Returns (client, container) or (None, None)
+    if the daemon or container is unreachable."""
+    client = _docker_client()
+    if not client:
+        return None, None
+    try:
+        return client, client.containers.get(name)
+    except Exception as e:
+        log.debug("Container %s not found: %s", name, e)
+        return None, None
+
+
+# ---------------------------------------------------------------------------
 # Repair steps
 # ---------------------------------------------------------------------------
 def _step_preflight(cfg) -> str | None:
@@ -259,6 +302,37 @@ def _step_shutdown(cfg) -> bool:
         emit("WARN", "Skipping shutdown (skip_shutdown=true).", "warn"); return True
 
     host, port, apikey, urlbase = cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase","")
+    container_name = (cfg.get("container_name") or "").strip()
+
+    # Preferred path: if the user supplied a container name and we can reach
+    # the Docker daemon, stop the container outright. This sidesteps the
+    # restart-policy race that breaks the /api/v3/system/shutdown approach.
+    if container_name:
+        client, container = _docker_container(container_name)
+        if container is None:
+            emit("WARN", f"Container '{container_name}' not reachable via docker.sock — falling back to app shutdown API.", "warn")
+            emit("INFO", "Mount /var/run/docker.sock and put PUID's group in the docker group to enable container-managed shutdown.", "info")
+        else:
+            emit("INFO", f"Stopping container '{container_name}' via Docker (timeout 30s)...", "info")
+            try:
+                container.stop(timeout=30)
+            except Exception as e:
+                emit("ERR", f"docker stop failed: {e}", "err")
+                return False
+            cfg["_docker_managed"] = container_name
+            # Confirm the app's API is actually gone — a stopped container's
+            # network endpoint should refuse connections immediately.
+            for _ in range(5):
+                if _job.aborted:
+                    emit("WARN", "Aborted during shutdown wait.", "warn"); return False
+                time.sleep(1)
+                if _get_status(host, port, apikey, urlbase, timeout=2) is None:
+                    emit("OK", f"Container '{container_name}' stopped. Waiting 2s for file handles to close...", "ok")
+                    time.sleep(2)
+                    return True
+            emit("WARN", "Container reports stopped but app still responds — proceeding anyway.", "warn")
+            return True
+
     emit("INFO", f"Sending shutdown to {cfg['app'].capitalize()}...", "info")
     _shutdown_app(host, port, apikey, urlbase)
     emit("OK",   "Shutdown command sent.", "ok")
@@ -459,8 +533,28 @@ def _step_restart(cfg, results) -> None:
         return
 
     host, port, apikey, urlbase = cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", "")
+
+    # If we stopped the container ourselves, start it ourselves. The user's
+    # restart policy is not enough — `docker stop` cleared the container's
+    # exit state, so unless-stopped won't auto-start it.
+    docker_managed = cfg.get("_docker_managed")
+    if docker_managed:
+        _, container = _docker_container(docker_managed)
+        if container is None:
+            emit("ERR", f"Cannot reach container '{docker_managed}' to start it.", "err")
+            emit("SYS", f"  docker start {docker_managed}", "sys")
+        else:
+            emit("INFO", f"Starting container '{docker_managed}'...", "info")
+            try:
+                container.start()
+                emit("OK", f"Container '{docker_managed}' started.", "ok")
+            except Exception as e:
+                emit("ERR", f"docker start failed: {e}", "err")
+                emit("SYS", f"  docker start {docker_managed}", "sys")
+
     emit("INFO", f"Waiting for {cfg['app'].capitalize()} to come back online...", "info")
-    emit("INFO", "(Docker restart policy will bring it up automatically)", "info")
+    if not docker_managed:
+        emit("INFO", "(Docker restart policy will bring it up automatically)", "info")
 
     deadline = time.time() + 180   # 3-minute timeout
     attempt  = 0
@@ -615,18 +709,20 @@ def api_apps():
     apps = []
     for name in ("sonarr", "radarr", "lidarr", "sportarr"):
         upper = name.upper()
-        host    = app.config.get(f"{upper}_HOST", "")
-        apikey  = app.config.get(f"{upper}_APIKEY", "")
-        urlbase = app.config.get(f"{upper}_URLBASE", "")
-        if not (host or apikey or urlbase):
+        host      = app.config.get(f"{upper}_HOST", "")
+        apikey    = app.config.get(f"{upper}_APIKEY", "")
+        urlbase   = app.config.get(f"{upper}_URLBASE", "")
+        container = app.config.get(f"{upper}_CONTAINER", "")
+        if not (host or apikey or urlbase or container):
             continue
         apps.append({
-            "app":        name,
-            "host":       host,
-            "port":       app.config.get(f"{upper}_PORT"),
-            "urlbase":    urlbase,
-            "apikey":     apikey,
-            "configured": bool(apikey),
+            "app":            name,
+            "host":           host,
+            "port":           app.config.get(f"{upper}_PORT"),
+            "urlbase":        urlbase,
+            "apikey":         apikey,
+            "container_name": container,
+            "configured":     bool(apikey),
         })
     return jsonify(apps)
 
@@ -650,6 +746,8 @@ def api_start():
         cfg["host"] = app.config.get(f"{app_name.upper()}_HOST") or "localhost"
     if not cfg.get("port"):
         cfg["port"] = app.config.get(f"{app_name.upper()}_PORT") or APP_DEFAULTS[app_name]["port"]
+    if not cfg.get("container_name"):
+        cfg["container_name"] = app.config.get(f"{app_name.upper()}_CONTAINER", "")
 
     if not cfg.get("apikey"):
         return jsonify({"error": "apikey is required"}), 400
