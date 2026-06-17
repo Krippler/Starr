@@ -77,9 +77,11 @@ docker run -d \
 | `/backups`       | Backup output — timestamped `.db` copies stored here |
 
 > **Mount mode:** `rw` is **required** — the repair operations (VACUUM, REINDEX, foreign-key cleanup, WAL checkpoint) write directly to the source `.db`.  
-> The original `.db` is never touched until the app has been shut down and a timestamped backup has been written to `/backups`.
+> The original `.db` is never touched until the app has been shut down and a timestamped backup has been written to `/backups`. If the backup write fails (e.g. permission error on `/backups`), the repair aborts before touching the source DB.
 
 > **Mount layout:** mount each app's config directory at `/data/<app>` (e.g. `/data/sonarr`). Starr auto-detects the database at `/data/<app>/<app>.db`, so you normally don't need to set a DB path by hand.
+
+> **Permissions:** Starr runs as `PUID:PGID` (default `99:100` on Unraid, `1000:1000` via compose). On startup the entrypoint chowns `/backups` to that UID so backups always work. The `/data/<app>` mounts are **not** chowned (they belong to the *arr apps), so `PUID:PGID` must match — or share a group with — the owner of those config dirs.
 
 ---
 
@@ -87,6 +89,8 @@ docker run -d \
 
 | Variable | Default | Description |
 |---|---|---|
+| `PUID` | `99` (Unraid) / `1000` (compose) | UID the container runs as. Must match the owner of your *arr config dirs so VACUUM/REINDEX can write the source DB. |
+| `PGID` | `100` (Unraid) / `1000` (compose) | GID the container runs as. |
 | `PORT` | `8877` | Web UI listen port |
 | `SECRET_KEY` | _(required)_ | Web UI access key — set this to protect the dashboard |
 | `LOG_LEVEL` | `INFO` | Log level: `DEBUG` `INFO` `WARNING` `ERROR` |

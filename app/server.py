@@ -496,6 +496,17 @@ def _repair_worker(cfg: dict) -> None:
 
         backup = _step_backup(cfg, db_path)
 
+        # Safety: if backup was supposed to happen and didn't, never mutate the
+        # source DB. _step_backup returns None on both intentional skip
+        # (no_backup=true) and on failure, so distinguish here.
+        if backup is None and not cfg.get("no_backup") and not cfg.get("dry_run"):
+            emit("ERR", "Aborting repair — refusing to run SQLite operations without a backup.", "err")
+            emit("ERR", "Fix the backup destination permissions and try again:", "err")
+            emit("SYS", f"  chown -R 1000:1000 {app.config['BACKUP_DIR']}", "sys")
+            _step_restart(cfg, {})   # bring the app back online
+            _job.result = {"status": "error", "message": "Backup failed; repair aborted"}
+            return
+
         results = _step_repair(cfg, db_path)
 
         _step_report(cfg, backup, results)
