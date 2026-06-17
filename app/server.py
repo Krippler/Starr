@@ -83,6 +83,12 @@ APP_DEFAULTS = {
     "sportarr": {"port": 1867, "dbname": "sportarr.db"},
 }
 
+# After the app first reads offline, re-poll this many times at this interval
+# to make sure it STAYS offline (a Docker restart policy can bring it back).
+# ~5 × 3s = ~15s, enough to catch a typical container restart.
+SHUTDOWN_STABILITY_CHECKS   = int(os.environ.get("SHUTDOWN_STABILITY_CHECKS", "5"))
+SHUTDOWN_STABILITY_INTERVAL = int(os.environ.get("SHUTDOWN_STABILITY_INTERVAL", "3"))
+
 ALL_OPS = ["integrity", "foreign_keys", "wal_checkpoint", "vacuum", "reindex", "analyze"]
 OP_DESC = {
     "integrity":      "PRAGMA integrity_check – full page-level scan",
@@ -264,7 +270,22 @@ def _step_shutdown(cfg) -> bool:
             emit("WARN", "Aborted during shutdown wait.", "warn"); return False
         time.sleep(2)
         if _get_status(host, port, apikey, urlbase, timeout=2) is None:
-            emit("OK",   "App is offline. Waiting 3s for file handles to close...", "ok")
+            # First offline read. But a container with a restart policy
+            # (restart: unless-stopped) will be brought back automatically a
+            # few seconds after the app process exits — so confirm it STAYS
+            # down before we touch the database.
+            emit("OK", "App appears offline. Confirming it stays down (~15s)...", "ok")
+            for _ in range(SHUTDOWN_STABILITY_CHECKS):
+                if _job.aborted:
+                    emit("WARN", "Aborted during shutdown wait.", "warn"); return False
+                time.sleep(SHUTDOWN_STABILITY_INTERVAL)
+                if _get_status(host, port, apikey, urlbase, timeout=2) is not None:
+                    emit("ERR", "App came back ONLINE after shutdown — its container restart policy is restarting it.", "err")
+                    emit("ERR", "Starr will not repair a database the app may reopen mid-operation.", "err")
+                    emit("ERR", "Stop the app's CONTAINER (not just the app), then re-run with 'Skip shutdown' enabled:", "err")
+                    emit("SYS", f"  docker stop {cfg['app']}", "sys")
+                    return False
+            emit("OK", "App confirmed offline. Waiting 3s for file handles to close...", "ok")
             time.sleep(3)
             return True
         emit("INFO", "Still running, waiting...", "info")
@@ -506,6 +527,18 @@ def _repair_worker(cfg: dict) -> None:
             _step_restart(cfg, {})   # bring the app back online
             _job.result = {"status": "error", "message": "Backup failed; repair aborted"}
             return
+
+        # Defense in depth: a container restart policy can bring the app back
+        # online after _step_shutdown returned. Re-verify it's still offline
+        # immediately before we open and mutate the database.
+        if not cfg.get("skip_shutdown") and not cfg.get("dry_run"):
+            if _get_status(cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", "")) is not None:
+                emit("ERR", "App is back ONLINE just before repair — aborting to protect the database.", "err")
+                emit("ERR", "Its container restart policy likely restarted it. Stop the container and re-run with 'Skip shutdown':", "err")
+                emit("SYS", f"  docker stop {cfg['app']}", "sys")
+                _step_restart(cfg, {})
+                _job.result = {"status": "error", "message": "App restarted before repair; aborted"}
+                return
 
         results = _step_repair(cfg, db_path)
 

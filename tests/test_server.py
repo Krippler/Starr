@@ -15,6 +15,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 import server as srv
 
 
+@pytest.fixture(autouse=True)
+def _isolate_job():
+    """Some tests POST /api/repair/start, which spawns a real worker thread.
+    Make sure no leaked, still-running job bleeds into the next test (which
+    would make /api/repair/start return 409 instead of validating input)."""
+    srv._job.aborted = True           # signal any leaked worker to wind down
+    for _ in range(40):               # wait up to ~2s for it to exit
+        if not srv._job.running:
+            break
+        srv.time.sleep(0.05)
+    srv._job.reset()
+    yield
+
+
 @pytest.fixture
 def client(tmp_path):
     srv.app.config["TESTING"]    = True
@@ -216,6 +230,30 @@ def test_sportarr_in_app_defaults():
     assert "sportarr" in srv.APP_DEFAULTS
     assert srv.APP_DEFAULTS["sportarr"]["port"] == 1867
     assert srv.APP_DEFAULTS["sportarr"]["dbname"] == "sportarr.db"
+
+
+def test_shutdown_succeeds_when_app_stays_offline(monkeypatch):
+    """A normal shutdown: app goes offline and stays offline through the
+    stability window."""
+    srv._job.reset()
+    srv._job.start_time = srv.time.time()
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(srv, "_shutdown_app", lambda *a, **k: None)
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)  # always offline
+    assert srv._step_shutdown({"app": "sonarr", "host": "h", "port": 1, "apikey": "k"}) is True
+
+
+def test_shutdown_aborts_if_app_restarts(monkeypatch):
+    """If the app comes back online during the stability window (e.g. a Docker
+    restart policy), shutdown must fail rather than report success."""
+    srv._job.reset()
+    srv._job.start_time = srv.time.time()
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(srv, "_shutdown_app", lambda *a, **k: None)
+    # offline once (enters the stability check), then back online (restarted)
+    seq = iter([None, {"version": "x"}])
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: next(seq, {"version": "x"}))
+    assert srv._step_shutdown({"app": "sonarr", "host": "h", "port": 1, "apikey": "k"}) is False
 
 
 def test_repair_worker_aborts_when_backup_fails(monkeypatch, tmp_path):
