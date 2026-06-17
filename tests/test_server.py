@@ -232,6 +232,48 @@ def test_sportarr_in_app_defaults():
     assert srv.APP_DEFAULTS["sportarr"]["dbname"] == "sportarr.db"
 
 
+def test_shutdown_uses_docker_when_container_name_provided(monkeypatch):
+    """When container_name is set and the Docker SDK is reachable, shutdown
+    must stop the container directly (no app-API call, no stability polling)."""
+    srv._job.reset()
+    srv._job.start_time = srv.time.time()
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+
+    api_called = []
+    monkeypatch.setattr(srv, "_shutdown_app", lambda *a, **k: api_called.append(a))
+
+    stopped = []
+    class FakeContainer:
+        def stop(self, timeout=30): stopped.append(timeout)
+    monkeypatch.setattr(srv, "_docker_container", lambda n: ("client", FakeContainer()))
+
+    # Container is "stopped" → next status read returns None
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)
+
+    cfg = {"app": "sonarr", "host": "h", "port": 1, "apikey": "k",
+           "container_name": "sonarr"}
+    assert srv._step_shutdown(cfg) is True
+    assert stopped == [30],  "container.stop must be called with the default timeout"
+    assert api_called == [], "the *arr shutdown API must NOT be called when the container is being stopped"
+    assert cfg.get("_docker_managed") == "sonarr"
+
+
+def test_shutdown_falls_back_to_api_when_socket_unavailable(monkeypatch):
+    """If container_name is set but the daemon is unreachable, shutdown must
+    fall back to the *arr shutdown API path (warn + continue)."""
+    srv._job.reset()
+    srv._job.start_time = srv.time.time()
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(srv, "_docker_container", lambda n: (None, None))
+    monkeypatch.setattr(srv, "_shutdown_app", lambda *a, **k: None)
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)
+
+    cfg = {"app": "sonarr", "host": "h", "port": 1, "apikey": "k",
+           "container_name": "sonarr"}
+    assert srv._step_shutdown(cfg) is True
+    assert cfg.get("_docker_managed") is None, "Should not mark managed when fallback used"
+
+
 def test_shutdown_succeeds_when_app_stays_offline(monkeypatch):
     """A normal shutdown: app goes offline and stays offline through the
     stability window."""

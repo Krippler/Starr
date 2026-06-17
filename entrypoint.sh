@@ -33,6 +33,24 @@ if [ -d /backups ]; then
     chown -R starr:starr /backups || true
 fi
 
+# If the user mounted the Docker socket so Starr can stop/start the *arr
+# containers itself, make sure the `starr` user is in a group matching the
+# socket's GID — otherwise the socket is unreadable (it's typically root:root
+# 0660 on Unraid). We create a synthetic group with that GID if one doesn't
+# already exist and add starr to it. Safe no-op if the socket isn't mounted.
+if [ -S /var/run/docker.sock ]; then
+    SOCK_GID=$(stat -c '%g' /var/run/docker.sock)
+    if [ -n "$SOCK_GID" ] && [ "$SOCK_GID" != "0" ]; then
+        EXISTING=$(getent group "$SOCK_GID" | cut -d: -f1)
+        if [ -z "$EXISTING" ]; then
+            groupadd -g "$SOCK_GID" dockersock 2>/dev/null || true
+            EXISTING=dockersock
+        fi
+        usermod -aG "$EXISTING" starr 2>/dev/null || true
+        echo "[entrypoint] /var/run/docker.sock detected (gid=$SOCK_GID); added starr to group '$EXISTING'"
+    fi
+fi
+
 # Helpful one-line summary in container logs so users can spot UID mismatches.
 echo "[entrypoint] running as starr (uid=$(id -u starr) gid=$(id -g starr))"
 

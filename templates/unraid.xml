@@ -54,6 +54,11 @@
           Description="Where timestamped database backups are stored. Backups are auto-pruned based on MAX_BACKUP_AGE_DAYS."
           Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/starr/backups</Config>
 
+  <!-- ── Docker socket (optional: enables container-managed shutdown) ────── -->
+  <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw"
+          Description="Mount the host Docker socket so Starr can stop/start the *arr container itself (more reliable than the app's shutdown API on hosts with a container restart policy). Requires you to set the corresponding *_CONTAINER variable for each app. Leave blank to disable."
+          Type="Path" Display="always" Required="false" Mask="false">/var/run/docker.sock</Config>
+
   <!-- ── User / group (Unraid: 99:100 nobody:users) ─────────────────────── -->
   <Config Name="PUID" Target="PUID" Default="99" Mode=""
           Description="UID the container runs as. Must match (or be in the same group as) the UID that owns your *arr config dirs (Sonarr, Radarr, etc.) so VACUUM/REINDEX can write the source DB. Unraid default: 99 (nobody)."
@@ -95,6 +100,9 @@
   <Config Name="SONARR_URLBASE" Target="SONARR_URLBASE" Default="" Mode=""
           Description="Sonarr URL base if you use a reverse proxy subpath, e.g. /sonarr. Leave blank if none."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="SONARR_CONTAINER" Target="SONARR_CONTAINER" Default="sonarr" Mode=""
+          Description="Sonarr container name. When set + the Docker Socket above is mounted, Starr stops/starts the container itself instead of using Sonarr's API shutdown (more reliable with a container restart policy)."
+          Type="Variable" Display="always" Required="false" Mask="false">sonarr</Config>
 
   <!-- ── Radarr ─────────────────────────────────────────────────────────── -->
   <Config Name="RADARR_HOST" Target="RADARR_HOST" Default="" Mode=""
@@ -109,6 +117,9 @@
   <Config Name="RADARR_URLBASE" Target="RADARR_URLBASE" Default="" Mode=""
           Description="Radarr URL base if using a reverse proxy subpath, e.g. /radarr. Leave blank if none."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="RADARR_CONTAINER" Target="RADARR_CONTAINER" Default="radarr" Mode=""
+          Description="Radarr container name. When set + the Docker Socket above is mounted, Starr stops/starts the container itself."
+          Type="Variable" Display="always" Required="false" Mask="false">radarr</Config>
 
   <!-- ── Lidarr ─────────────────────────────────────────────────────────── -->
   <Config Name="LIDARR_HOST" Target="LIDARR_HOST" Default="" Mode=""
@@ -123,6 +134,9 @@
   <Config Name="LIDARR_URLBASE" Target="LIDARR_URLBASE" Default="" Mode=""
           Description="Lidarr URL base if using a reverse proxy subpath, e.g. /lidarr. Leave blank if none."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="LIDARR_CONTAINER" Target="LIDARR_CONTAINER" Default="lidarr" Mode=""
+          Description="Lidarr container name. When set + the Docker Socket above is mounted, Starr stops/starts the container itself."
+          Type="Variable" Display="always" Required="false" Mask="false">lidarr</Config>
 
   <!-- ── Sportarr ───────────────────────────────────────────────────────── -->
   <Config Name="SPORTARR_HOST" Target="SPORTARR_HOST" Default="" Mode=""
@@ -137,5 +151,8 @@
   <Config Name="SPORTARR_URLBASE" Target="SPORTARR_URLBASE" Default="" Mode=""
           Description="Sportarr URL base if using a reverse proxy subpath, e.g. /sportarr. Leave blank if none."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="SPORTARR_CONTAINER" Target="SPORTARR_CONTAINER" Default="sportarr" Mode=""
+          Description="Sportarr container name. When set + the Docker Socket above is mounted, Starr stops/starts the container itself."
+          Type="Variable" Display="always" Required="false" Mask="false">sportarr</Config>
 
 </Container>

@@ -8,3 +8,8 @@ flask-cors==6.0.0
 requests==2.33.0
 
 gunicorn==23.0.0
+
+# Optional: Docker SDK. Used to docker-stop / docker-start the *arr container
+# directly (when /var/run/docker.sock is mounted), which is more reliable than
+# the *arr shutdown API on hosts with a container restart policy.
+docker==7.1.0

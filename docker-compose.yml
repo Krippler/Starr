@@ -33,28 +33,32 @@ services:
       MAX_BACKUP_AGE_DAYS: ${MAX_BACKUP_AGE_DAYS:-7}
 
       # ── Sonarr (optional — can also be set in the web UI) ──────────────────
-      SONARR_HOST:    ${SONARR_HOST:-}
-      SONARR_PORT:    ${SONARR_PORT:-8989}
-      SONARR_APIKEY:  ${SONARR_APIKEY:-}
-      SONARR_URLBASE: ${SONARR_URLBASE:-}
+      SONARR_HOST:      ${SONARR_HOST:-}
+      SONARR_PORT:      ${SONARR_PORT:-8989}
+      SONARR_APIKEY:    ${SONARR_APIKEY:-}
+      SONARR_URLBASE:   ${SONARR_URLBASE:-}
+      SONARR_CONTAINER: ${SONARR_CONTAINER:-sonarr}
 
       # ── Radarr ─────────────────────────────────────────────────────────────
-      RADARR_HOST:    ${RADARR_HOST:-}
-      RADARR_PORT:    ${RADARR_PORT:-7878}
-      RADARR_APIKEY:  ${RADARR_APIKEY:-}
-      RADARR_URLBASE: ${RADARR_URLBASE:-}
+      RADARR_HOST:      ${RADARR_HOST:-}
+      RADARR_PORT:      ${RADARR_PORT:-7878}
+      RADARR_APIKEY:    ${RADARR_APIKEY:-}
+      RADARR_URLBASE:   ${RADARR_URLBASE:-}
+      RADARR_CONTAINER: ${RADARR_CONTAINER:-radarr}
 
       # ── Lidarr ─────────────────────────────────────────────────────────────
-      LIDARR_HOST:    ${LIDARR_HOST:-}
-      LIDARR_PORT:    ${LIDARR_PORT:-8686}
-      LIDARR_APIKEY:  ${LIDARR_APIKEY:-}
-      LIDARR_URLBASE: ${LIDARR_URLBASE:-}
+      LIDARR_HOST:      ${LIDARR_HOST:-}
+      LIDARR_PORT:      ${LIDARR_PORT:-8686}
+      LIDARR_APIKEY:    ${LIDARR_APIKEY:-}
+      LIDARR_URLBASE:   ${LIDARR_URLBASE:-}
+      LIDARR_CONTAINER: ${LIDARR_CONTAINER:-lidarr}
 
       # ── Sportarr ───────────────────────────────────────────────────────────
-      SPORTARR_HOST:    ${SPORTARR_HOST:-}
-      SPORTARR_PORT:    ${SPORTARR_PORT:-1867}
-      SPORTARR_APIKEY:  ${SPORTARR_APIKEY:-}
-      SPORTARR_URLBASE: ${SPORTARR_URLBASE:-}
+      SPORTARR_HOST:      ${SPORTARR_HOST:-}
+      SPORTARR_PORT:      ${SPORTARR_PORT:-1867}
+      SPORTARR_APIKEY:    ${SPORTARR_APIKEY:-}
+      SPORTARR_URLBASE:   ${SPORTARR_URLBASE:-}
+      SPORTARR_CONTAINER: ${SPORTARR_CONTAINER:-sportarr}
 
     volumes:
       # Mount your Starr app config dirs so the container can read the .db files
@@ -66,6 +70,10 @@ services:
       - ${SPORTARR_CONFIG:-/opt/appdata/sportarr}:/data/sportarr:rw
       # Backup output
       - ${BACKUP_PATH:-./backups}:/backups
+      # Optional: Docker socket so Starr can docker-stop/start the *arr
+      # containers itself (more reliable than the app shutdown API on hosts
+      # with a restart policy). Comment out to disable container-managed mode.
+      - /var/run/docker.sock:/var/run/docker.sock
 
     healthcheck:
       test: ["CMD", "python3", "-c",
