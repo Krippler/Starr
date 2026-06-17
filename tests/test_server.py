@@ -132,6 +132,37 @@ def test_api_apps_empty(client):
     assert isinstance(json.loads(r.data), list)
 
 
+def test_api_apps_returns_urlbase_and_masks_apikey(client):
+    """All env-configured fields should round-trip; apikey is never sent verbatim."""
+    srv.app.config["SONARR_HOST"]    = "sonarr.local"
+    srv.app.config["SONARR_PORT"]    = 8989
+    srv.app.config["SONARR_APIKEY"]  = "supersecret"
+    srv.app.config["SONARR_URLBASE"] = "/sonarr"
+    try:
+        body = json.loads(client.get("/api/apps").data)
+        sonarr = next(a for a in body if a["app"] == "sonarr")
+        assert sonarr["host"]       == "sonarr.local"
+        assert sonarr["port"]       == 8989
+        assert sonarr["urlbase"]    == "/sonarr"
+        assert sonarr["configured"] is True
+        assert sonarr["apikey"]     == "***"          # masked
+        assert "supersecret" not in client.get("/api/apps").data.decode()
+    finally:
+        srv.app.config["SONARR_HOST"]    = ""
+        srv.app.config["SONARR_APIKEY"]  = ""
+        srv.app.config["SONARR_URLBASE"] = ""
+
+
+def test_api_apps_includes_app_when_only_apikey_set(client):
+    """An app with apikey but no host should still appear (previously it was filtered out)."""
+    srv.app.config["RADARR_APIKEY"] = "key-only"
+    try:
+        body = json.loads(client.get("/api/apps").data)
+        assert any(a["app"] == "radarr" for a in body)
+    finally:
+        srv.app.config["RADARR_APIKEY"] = ""
+
+
 # ── SQLite repair logic (unit tests, no network) ──────────────────────────────
 def test_sqlite_integrity(tmp_path):
     db = tmp_path / "test.db"

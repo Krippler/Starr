@@ -556,18 +556,29 @@ def api_config():
 @app.route("/api/apps")
 @require_api_key
 def api_apps():
-    """Return pre-configured app connections."""
+    """Return pre-configured app connections.
+
+    Returns one entry per app whenever any of host / apikey / urlbase has
+    been set via environment, so the UI can pre-fill the form even if the
+    user only configured a subset (e.g. apikey but no host). The apikey
+    value itself is never sent to the client.
+    """
     apps = []
     for name in ("sonarr", "radarr", "lidarr", "sportarr"):
-        host = app.config.get(f"{name.upper()}_HOST", "")
-        if host:
-            apps.append({
-                "app":        name,
-                "host":       host,
-                "port":       app.config.get(f"{name.upper()}_PORT"),
-                "apikey":     "***" if app.config.get(f"{name.upper()}_APIKEY") else "",
-                "configured": bool(app.config.get(f"{name.upper()}_APIKEY")),
-            })
+        upper = name.upper()
+        host    = app.config.get(f"{upper}_HOST", "")
+        apikey  = app.config.get(f"{upper}_APIKEY", "")
+        urlbase = app.config.get(f"{upper}_URLBASE", "")
+        if not (host or apikey or urlbase):
+            continue
+        apps.append({
+            "app":        name,
+            "host":       host,
+            "port":       app.config.get(f"{upper}_PORT"),
+            "urlbase":    urlbase,
+            "apikey":     "***" if apikey else "",
+            "configured": bool(apikey),
+        })
     return jsonify(apps)
 
 
