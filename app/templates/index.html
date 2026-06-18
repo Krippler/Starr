@@ -805,6 +805,17 @@ async function startRepair() {
 async function stopRepair() {
   const res = await fetch('/api/repair/stop',{method:'POST',headers:authHeaders()});
   if (res.status===401) { handle401(); return; }
+  // 409 = "No job running" — the server has already finished. Reset local
+  // state so the UI exits 'running' mode instead of looping on Stop forever.
+  if (res.status===409) {
+    logLine('WARN','No active job to stop — UI was out of sync; resetting.','warn');
+    finishJob();
+    return;
+  }
+  if (!res.ok) {
+    logLine('ERR',`Stop failed: HTTP ${res.status}`,'err');
+    return;
+  }
   logLine('WARN','Stop requested — aborting after current step…','warn');
 }
 

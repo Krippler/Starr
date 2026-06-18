@@ -655,6 +655,21 @@ def _repair_worker(cfg: dict) -> None:
         _job.result = {"status": "error", "message": str(e)}
     finally:
         _job.running = False
+        # Make sure the UI always gets a terminal __DONE__ event, even on
+        # early-return paths (preflight / shutdown / backup-safety / restart
+        # guard). _step_restart emits its own __DONE__ on the happy path;
+        # only emit here if it didn't.
+        if not any(h.get("cls") == "__done__" for h in _job.history):
+            err_msg = (_job.result or {}).get("message", "Job ended without completing.")
+            emit("ERR", err_msg, "err") if _job.result and _job.result.get("status") == "error" else None
+            emit("__DONE__", json.dumps({
+                "fixed":    0,
+                "errors":   1 if (_job.result or {}).get("status") == "error" else 0,
+                "elapsed":  _elapsed(),
+                "dry_run":  cfg.get("dry_run", False),
+                "status":   (_job.result or {}).get("status", "error"),
+                "message":  err_msg,
+            }), "__done__")
         emit("SYS", "Job finished. SSE stream remains open.", "sys")
 
 
