@@ -246,6 +246,25 @@ header {
 .warn-box-body { font-size: 11px; line-height: 1.7; color: var(--muted); }
 .warn-box-body strong { color: var(--warn); display: block; margin-bottom: 3px; font-size: 12px; }
 code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 11px; }
+/* Auth gate — centered card shown until the Web Key unlocks the interface */
+.auth-gate {
+  max-width: 420px; margin: 80px auto; padding: 32px 28px;
+  background: rgba(15,18,28,.85); border: 1px solid rgba(176,136,255,.25);
+  border-radius: 12px; text-align: center;
+  box-shadow: 0 10px 40px rgba(0,0,0,.4);
+  animation: gateFadeIn .35s ease-out;
+}
+@keyframes gateFadeIn { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+.gate-logo { color: var(--dry); margin-bottom: 8px; display:flex; justify-content:center; }
+.gate-title { margin: 4px 0 6px; font-size: 18px; letter-spacing: .12em; color: #e9eef9; }
+.gate-sub { margin: 0 0 18px; font-size: 11px; color: var(--muted); }
+.gate-input { width: 100%; padding: 10px 12px; font-size: 13px; }
+.gate-input::placeholder { letter-spacing: .04em; }
+.gate-foot { margin: 14px 0 0; font-size: 10px; color: var(--muted); }
+.gate-foot code { background: rgba(255,255,255,.06); padding: 1px 5px; border-radius: 3px; }
+.gate-foot.err { color: var(--err); }
+.gate-foot.ok  { color: var(--ok); }
+
 .sec-warn-box {
   background: rgba(255,59,92,.07); border: 1px solid rgba(255,59,92,.3);
   border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px;
@@ -267,6 +286,27 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       Until then, the Web Key field below is not enforced.
     </div>
   </div>
+
+  <!-- AUTH GATE — shown until the Web Key unlocks the interface -->
+  <div id="authGate" class="auth-gate">
+    <div class="gate-logo">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <ellipse cx="12" cy="5" rx="9" ry="3"/>
+        <path d="M3 5v14a9 3 0 0 0 18 0V5"/>
+        <path d="M3 12a9 3 0 0 0 18 0"/>
+      </svg>
+    </div>
+    <h2 class="gate-title">STARR DB REPAIR</h2>
+    <p class="gate-sub">Enter your Web Key to unlock the dashboard</p>
+    <input id="webkey" type="password" class="auth-field gate-input"
+           placeholder="SECRET_KEY"
+           oninput="onWebKeyInput()"
+           autocomplete="current-password" autofocus>
+    <p class="gate-foot" id="gateFoot">The Web Key matches the <code>SECRET_KEY</code> set on the Starr container.</p>
+  </div>
+
+  <!-- MAIN SHELL — hidden until the gate accepts the key -->
+  <div id="mainShell" style="display:none">
 
   <header>
     <div class="logo">
@@ -338,7 +378,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         <div class="field">
           <label>Container Name (optional — Docker socket)</label>
           <!-- placeholder updated dynamically by updatePlaceholders() -->
-          <input id="containerName" placeholder="sonarr">
+          <input id="containerName" placeholder="sonarr" oninput="syncShutdownWarning()">
         </div>
         <div class="field">
           <label>Database Path (optional — auto-detected)</label>
@@ -346,20 +386,14 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
           <input id="dbpath" placeholder="/config/sonarr.db  or leave blank to auto-detect">
         </div>
       </div>
-      <div class="field" style="margin-bottom:14px">
-        <label style="color:var(--dry)">
-          🔑 Web Key
-          <span style="color:var(--muted);font-size:9px;margin-left:6px;letter-spacing:.08em">matches SECRET_KEY in your .env</span>
-        </label>
-        <input id="webkey" type="password" class="auth-field"
-               placeholder="Enter your SECRET_KEY value"
-               oninput="onWebKeyInput()"
-               autocomplete="current-password">
-      </div>
       <div class="action-row">
         <button class="btn btn-ghost btn-sm" onclick="testConnection()" id="testBtn">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Test Connection
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="lockUI()" id="lockBtn" style="margin-left:auto">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          Lock
         </button>
       </div>
     </div>
@@ -385,8 +419,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     </div>
     <div class="panel-body">
       <div id="skipShutdownHint" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px">
-        <strong>Docker / Unraid:</strong> the app's restart policy will bring it back online seconds after the shutdown API stops it.
-        For a safe repair, <strong>stop the app's container first</strong> (e.g. <code>docker stop sonarr</code>), then keep this checked so Starr repairs the idle database directly. Start the container again when the repair finishes.
+        <!-- updated by syncHint() based on whether a container name is set -->
       </div>
       <div class="ops-header">
         <span style="font-size:10px;color:var(--muted)" id="selCount">0 operations selected</span>
@@ -472,13 +505,14 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     </div>
   </div>
 
+  </div><!-- /mainShell -->
 </div><!-- /wrap -->
 
 <script>
 // ── App definitions ───────────────────────────────────────────────────────────
 const APPS = {
   sonarr: {
-    name: 'SONARR', sub: 'TV Series Database Repair', color: '#00c8ff', port: 8989,
+    name: 'SONARR', sub: 'TV Series Database Repair', color: '#00c8ff', port: 8989, api: 'v3',
     urlbasePlaceholder: '/sonarr',   dbPlaceholder: '/config/sonarr.db',
     icon: `<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>`,
     ops: [
@@ -491,7 +525,7 @@ const APPS = {
     ]
   },
   radarr: {
-    name: 'RADARR', sub: 'Movie Database Repair', color: '#ffd700', port: 7878,
+    name: 'RADARR', sub: 'Movie Database Repair', color: '#ffd700', port: 7878, api: 'v3',
     urlbasePlaceholder: '/radarr',   dbPlaceholder: '/config/radarr.db',
     icon: `<path d="M7 4v16M17 4v16M3 8h4m10 0h4M3 16h4m10 0h4M7 8h10M7 16h10"/>`,
     ops: [
@@ -504,7 +538,7 @@ const APPS = {
     ]
   },
   lidarr: {
-    name: 'LIDARR', sub: 'Music Database Repair', color: '#1db954', port: 8686,
+    name: 'LIDARR', sub: 'Music Database Repair', color: '#1db954', port: 8686, api: 'v1',
     urlbasePlaceholder: '/lidarr',   dbPlaceholder: '/config/lidarr.db',
     icon: `<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`,
     ops: [
@@ -517,7 +551,7 @@ const APPS = {
     ]
   },
   sportarr: {
-    name: 'SPORTARR', sub: 'Sports PVR Database Repair', color: '#ff6b35', port: 1867,
+    name: 'SPORTARR', sub: 'Sports PVR Database Repair', color: '#ff6b35', port: 1867, api: 'v3',
     urlbasePlaceholder: '/sportarr', dbPlaceholder: '/config/sportarr.db',
     icon: `<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/>`,
     ops: [
@@ -572,21 +606,36 @@ function updatePlaceholders(app) {
   document.getElementById('urlbase').placeholder       = cfg.urlbasePlaceholder;
   document.getElementById('dbpath').placeholder        = cfg.dbPlaceholder + '  or leave blank to auto-detect';
   document.getElementById('containerName').placeholder = app;     // e.g. 'sonarr'
-  document.getElementById('warnTitle').textContent =
-    cfg.name.charAt(0) + cfg.name.slice(1).toLowerCase() +
-    ' will be shut down before any repairs are performed';
+  syncShutdownWarning();
 }
 
-// ── Default-key warning (pure JS — no Jinja required) ─────────────────────────
+// Phrases the pre-repair warning banner to match the actual shutdown mode:
+// docker-managed when a container name is set, otherwise the *arr API shutdown.
+function syncShutdownWarning() {
+  const cfg = APPS[currentApp];
+  const pretty = cfg.name.charAt(0) + cfg.name.slice(1).toLowerCase();
+  const container = (document.getElementById('containerName')?.value || '').trim();
+  document.getElementById('warnTitle').textContent = container
+    ? `${pretty}'s container will be stopped (docker stop ${container}) before any repairs are performed`
+    : `${pretty} will be shut down before any repairs are performed`;
+}
+
+// ── Default-key warning + auto-unlock ─────────────────────────────────────────
+// /api/config returns { using_default_key: bool }. If the server is in
+// no-auth mode (default key), the gate would block the user from ever
+// entering anything useful, so unlock immediately and surface the warning.
 function checkDefaultKey() {
-  fetch('/api/config')
+  return fetch('/api/config')
     .then(r => r.ok ? r.json() : null)
     .then(data => {
       if (data && data.using_default_key) {
         document.getElementById('defaultKeyWarn').style.display = 'flex';
+        unlockUI();   // server isn't enforcing — no point gating the UI
+        return true;
       }
+      return false;
     })
-    .catch(() => {}); // silently ignore if endpoint not available
+    .catch(() => false);
 }
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
@@ -597,17 +646,68 @@ function boot() {
   updatePlaceholders(currentApp);
   selectSafe();
   renderOps();
-  loadBackups();
-  checkDefaultKey();
 
-  loadEnvConfig({ logErrors: true });
+  // 1) Always check the default-key path first — if auth isn't enforced,
+  //    unlock the UI right away.
+  // 2) Otherwise, if we have a key saved from this session, try it silently;
+  //    on success, unlock. On failure, the gate stays up.
+  checkDefaultKey().then(usingDefault => {
+    if (usingDefault) {
+      loadBackups();
+      loadEnvConfig({ logErrors: false });
+      return;
+    }
+    if (saved) {
+      loadEnvConfig({ logErrors: false }).then(ok => {
+        if (ok) unlockUI();
+      });
+    }
+  });
 
-  // Show the Docker/Unraid guidance only while "Skip Shutdown" is checked.
+  // Show the Docker/Unraid guidance only while "Skip Shutdown" is checked,
+  // and tailor the message based on whether a container name is set.
   const skip = document.getElementById('skipShutdownCheck');
   const hint = document.getElementById('skipShutdownHint');
-  const syncHint = () => { hint.style.display = skip.checked ? 'block' : 'none'; };
+  window.syncHint = () => {
+    const container = (document.getElementById('containerName')?.value || '').trim();
+    if (!skip.checked) { hint.style.display = 'none'; return; }
+    hint.style.display = 'block';
+    if (container) {
+      hint.innerHTML = `<strong>You don't need this checked.</strong> A container name is set (<code>${escHtml(container)}</code>), so Starr will <code>docker stop</code> the container directly — no restart-policy race to work around. Uncheck this unless you've already stopped the container yourself.`;
+    } else {
+      hint.innerHTML = `<strong>Docker / Unraid:</strong> the app's restart policy will bring it back online seconds after the shutdown API stops it. For a safe repair, <strong>stop the app's container first</strong> (e.g. <code>docker stop ${currentApp}</code>), then keep this checked so Starr repairs the idle database directly. Start the container again when the repair finishes.`;
+    }
+  };
   skip.addEventListener('change', syncHint);
+  document.getElementById('containerName').addEventListener('input', syncHint);
   syncHint();
+}
+
+// ── Gate reveal / lock ────────────────────────────────────────────────────────
+let _unlocked = false;
+function unlockUI() {
+  if (_unlocked) return;
+  _unlocked = true;
+  document.getElementById('authGate').style.display  = 'none';
+  document.getElementById('mainShell').style.display = '';
+  loadBackups();
+  setStatus('READY', 'var(--ok)', false);
+}
+function lockUI() {
+  _unlocked = false;
+  lastLoadedKey = null;
+  sessionStorage.removeItem('starr_web_key');
+  document.getElementById('webkey').value = '';
+  document.getElementById('mainShell').style.display = 'none';
+  document.getElementById('authGate').style.display  = '';
+  document.getElementById('webkey').focus();
+  setGateFoot('The Web Key matches the <code>SECRET_KEY</code> set on the Starr container.', '');
+}
+function setGateFoot(html, cls /* '' | 'ok' | 'err' */) {
+  const el = document.getElementById('gateFoot');
+  if (!el) return;
+  el.className = 'gate-foot' + (cls ? ' ' + cls : '');
+  el.innerHTML = html;
 }
 
 // Tracks the last Web Key we successfully loaded config with, so the
@@ -640,12 +740,19 @@ function onWebKeyInput() {
   const key = getWebKey();
   clearTimeout(webKeyDebounce);
   if (!key || key === lastLoadedKey) return;
+  if (!_unlocked) setGateFoot('Checking…', '');
   webKeyDebounce = setTimeout(() => {
     loadEnvConfig({ logErrors: false }).then(ok => {
       if (ok) {
-        setStatus('READY', 'var(--ok)', false);
-        loadBackups();
+        setGateFoot('✓ Accepted', 'ok');
+        // Slight delay so the user sees the success state before reveal
+        setTimeout(unlockUI, 200);
         logLine('SYS', 'Web key accepted — configuration loaded.', 'sys');
+      } else if (!_unlocked && key.length >= 8) {
+        // Long enough to be a real attempt, but rejected
+        setGateFoot('Incorrect key — check that it matches the SECRET_KEY env var on the Starr container.', 'err');
+      } else if (!_unlocked) {
+        setGateFoot('The Web Key matches the <code>SECRET_KEY</code> set on the Starr container.', '');
       }
     });
   }, 500);
@@ -661,6 +768,7 @@ function applyEnvConfig(apps, app) {
   if (a.port)    document.getElementById('port').value    = a.port;
   if (a.urlbase) document.getElementById('urlbase').value = a.urlbase;
   if (a.container_name) document.getElementById('containerName').value = a.container_name;
+  syncShutdownWarning();
   if (a.apikey)  document.getElementById('apikey').value  = a.apikey;
   const loaded = [];
   if (a.host)           loaded.push('host');
@@ -743,9 +851,10 @@ async function testConnection() {
   const urlbase = document.getElementById('urlbase').value.trim();
   if (!apikey) { logLine('ERR','API key required.','err'); return; }
   btn.disabled = true; btn.textContent = 'Testing…';
-  logLine('INFO', `Testing http://${host}:${port}${urlbase}/api/v3/system/status`, 'info');
+  const api = APPS[currentApp].api || 'v3';
+  logLine('INFO', `Testing http://${host}:${port}${urlbase}/api/${api}/system/status`, 'info');
   try {
-    const r = await fetch(`http://${host}:${port}${urlbase}/api/v3/system/status`,
+    const r = await fetch(`http://${host}:${port}${urlbase}/api/${api}/system/status`,
       { headers: { 'X-Api-Key': apikey } });
     if (r.ok) {
       const d = await r.json();
