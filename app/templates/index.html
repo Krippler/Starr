@@ -502,6 +502,69 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     </div>
   </div>
 
+  <!-- ── Scheduled Repairs ──────────────────────────────────────────────────── -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+        Scheduled Repairs
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="openScheduleForm()" id="addSchedBtn">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Add Schedule
+      </button>
+    </div>
+    <div class="panel-body" id="schedulesPanel">
+      <div class="empty-state">Loading schedules…</div>
+    </div>
+
+    <!-- Add/Edit form, hidden until "Add Schedule" is clicked -->
+    <div class="panel-body" id="scheduleForm" style="display:none;border-top:1px solid var(--border)">
+      <div class="form-grid" style="margin-bottom:10px">
+        <div class="field"><label>Name</label><input id="schedName" placeholder="Sonarr nightly"></div>
+        <div class="field"><label>App</label>
+          <select id="schedApp">
+            <option value="sonarr">Sonarr</option>
+            <option value="radarr">Radarr</option>
+            <option value="lidarr">Lidarr</option>
+            <option value="sportarr">Sportarr</option>
+          </select>
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Cron expression <span style="color:var(--muted);font-size:9px">5 fields: minute hour day month weekday</span></label>
+        <input id="schedCron" placeholder="0 3 * * *">
+        <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+          <button type="button" class="btn btn-ghost btn-sm" onclick="setCron('0 3 * * *')">Daily 3am</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="setCron('0 3 * * 0')">Weekly Sun 3am</button>
+          <button type="button" class="btn btn-ghost btn-sm" onclick="setCron('0 3 1 * *')">Monthly 1st 3am</button>
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Operations</label>
+        <div id="schedOps" style="display:flex;flex-wrap:wrap;gap:8px;font-size:10px"></div>
+      </div>
+      <div style="display:flex;gap:14px;margin-bottom:12px;font-size:10px;color:var(--muted)">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="schedSkipIfClean" checked>
+          Skip whole run if DB is clean
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="schedDryRun">
+          Dry run
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="schedEnabled" checked>
+          Enabled
+        </label>
+      </div>
+      <div class="action-row">
+        <button class="btn btn-primary btn-sm" onclick="saveSchedule()" id="schedSaveBtn">Save schedule</button>
+        <button class="btn btn-ghost btn-sm" onclick="closeScheduleForm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   </div><!-- /mainShell -->
 </div><!-- /wrap -->
 
@@ -705,6 +768,7 @@ function unlockUI() {
   document.getElementById('authGate').style.display  = 'none';
   document.getElementById('mainShell').style.display = '';
   loadBackups();
+  loadSchedules();
   setStatus('READY', 'var(--ok)', false);
 }
 function lockUI() {
@@ -1060,6 +1124,160 @@ async function loadBackups() {
       `</tbody></table>`;
   } catch(e) { panel.innerHTML='<div class="empty-state" style="color:var(--err)">Failed to load backups.</div>'; }
 }
+
+// ── Schedules ────────────────────────────────────────────────────────────────
+const ALL_OPS = [
+  ['integrity',     '🔍 Integrity'],
+  ['foreign_keys',  '🔗 FK check'],
+  ['wal_checkpoint','💾 WAL checkpoint'],
+  ['vacuum',        '🧹 VACUUM'],
+  ['reindex',       '📑 Reindex'],
+  ['analyze',       '📊 Analyze'],
+];
+
+function setCron(expr) { document.getElementById('schedCron').value = expr; }
+
+function renderSchedOpsCheckboxes() {
+  document.getElementById('schedOps').innerHTML = ALL_OPS.map(([id,label]) =>
+    `<label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+       <input type="checkbox" class="sched-op" value="${id}"> ${label}
+     </label>`).join('');
+  // Default selection: the four safe ops
+  document.querySelectorAll('.sched-op').forEach(cb => {
+    cb.checked = ['integrity','foreign_keys','wal_checkpoint','vacuum'].includes(cb.value);
+  });
+}
+
+let editingScheduleId = null;
+function openScheduleForm(existing /* nullable */) {
+  renderSchedOpsCheckboxes();
+  editingScheduleId = existing?.id || null;
+  document.getElementById('schedName').value           = existing?.name || '';
+  document.getElementById('schedApp').value            = existing?.app || currentApp;
+  document.getElementById('schedCron').value           = existing?.cron || '0 3 * * *';
+  document.getElementById('schedSkipIfClean').checked  = existing ? !!existing.skip_if_clean : true;
+  document.getElementById('schedDryRun').checked       = !!existing?.dry_run;
+  document.getElementById('schedEnabled').checked      = existing ? !!existing.enabled : true;
+  if (existing?.ops) {
+    document.querySelectorAll('.sched-op').forEach(cb => { cb.checked = existing.ops.includes(cb.value); });
+  }
+  document.getElementById('schedSaveBtn').textContent = existing ? 'Update schedule' : 'Save schedule';
+  document.getElementById('scheduleForm').style.display = '';
+  document.getElementById('addSchedBtn').disabled = true;
+}
+
+function closeScheduleForm() {
+  editingScheduleId = null;
+  document.getElementById('scheduleForm').style.display = 'none';
+  document.getElementById('addSchedBtn').disabled = false;
+}
+
+async function saveSchedule() {
+  const ops = [...document.querySelectorAll('.sched-op:checked')].map(cb => cb.value);
+  if (!ops.length) { logLine('ERR','Select at least one op.','err'); return; }
+  const payload = {
+    name:          document.getElementById('schedName').value.trim(),
+    app:           document.getElementById('schedApp').value,
+    cron:          document.getElementById('schedCron').value.trim(),
+    ops,
+    skip_if_clean: document.getElementById('schedSkipIfClean').checked,
+    dry_run:       document.getElementById('schedDryRun').checked,
+    enabled:       document.getElementById('schedEnabled').checked,
+  };
+  const url    = editingScheduleId ? `/api/schedules/${editingScheduleId}` : '/api/schedules';
+  const method = editingScheduleId ? 'PUT' : 'POST';
+  const res = await fetch(url, { method, headers: authHeaders(), body: JSON.stringify(payload) });
+  if (res.status === 401) { handle401(); return; }
+  if (!res.ok) {
+    const e = await res.json().catch(()=>({error:'failed'}));
+    logLine('ERR', e.error || 'Failed to save schedule.', 'err');
+    return;
+  }
+  logLine('OK', editingScheduleId ? 'Schedule updated.' : 'Schedule created.', 'ok');
+  closeScheduleForm();
+  loadSchedules();
+}
+
+async function loadSchedules() {
+  const panel = document.getElementById('schedulesPanel');
+  panel.innerHTML = '<div class="empty-state">Loading…</div>';
+  try {
+    const res = await fetch('/api/schedules', { headers: authHeaders() });
+    if (res.status === 401) { panel.innerHTML = '<div class="empty-state" style="color:var(--err)">Unauthorized.</div>'; return; }
+    const data = await res.json();
+    if (!data.length) {
+      panel.innerHTML = '<div class="empty-state">No schedules yet. Click <strong>+ Add Schedule</strong> to automate a repair.</div>';
+      return;
+    }
+    panel.innerHTML = data.map(renderScheduleRow).join('');
+  } catch(e) {
+    panel.innerHTML = '<div class="empty-state" style="color:var(--err)">Failed to load schedules.</div>';
+  }
+}
+
+function renderScheduleRow(s) {
+  const cfg = APPS[s.app] || { color: 'var(--muted)' };
+  const ops = (s.ops || []).map(o => `<span class="sched-tag">${o}</span>`).join('');
+  const next = s.next_run ? new Date(s.next_run).toLocaleString() : '—';
+  const last = s.last_run ? new Date((s.last_run.ts||0)*1000).toLocaleString() : 'never';
+  const lastStatus = s.last_status || '—';
+  const statusColor = ({ok:'var(--ok)', clean:'var(--ok)', warning:'var(--warn)', error:'var(--err)', skipped:'var(--muted)'})[lastStatus] || 'var(--muted)';
+  return `
+    <div class="sched-row" style="display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--border);font-size:11px">
+      <div style="width:6px;align-self:stretch;background:${cfg.color};border-radius:2px"></div>
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:8px"><strong>${escHtml(s.name)}</strong>
+          <span style="color:var(--muted);font-size:10px">${s.app}</span>
+          ${s.enabled ? '' : '<span style="color:var(--warn);font-size:9px">DISABLED</span>'}
+          ${s.skip_if_clean ? '<span style="color:var(--muted);font-size:9px" title="Probe will skip the run if quick_check + foreign_key_check are both clean">skip-if-clean</span>' : ''}
+          ${s.dry_run ? '<span style="color:var(--dry);font-size:9px">DRY RUN</span>' : ''}
+        </div>
+        <div style="color:var(--muted);font-size:10px;margin-top:2px">
+          <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">${escHtml(s.cron)}</code> · next: ${escHtml(next)} · last: ${escHtml(last)} <span style="color:${statusColor}">${escHtml(lastStatus)}</span>
+        </div>
+        <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${ops}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px">
+        <button class="btn btn-ghost btn-sm" onclick='runScheduleNow("${s.id}")'>Run now</button>
+        <button class="btn btn-ghost btn-sm" onclick='editSchedule(${JSON.stringify(JSON.stringify(s))})'>Edit</button>
+        <button class="btn btn-ghost btn-sm" onclick='deleteSchedule("${s.id}", "${escHtml(s.name).replace(/"/g, "&quot;")}")'>Delete</button>
+      </div>
+    </div>`;
+}
+
+function editSchedule(jsonStr) {
+  try { openScheduleForm(JSON.parse(JSON.parse(jsonStr))); }
+  catch(e) { logLine('ERR','Failed to edit schedule.','err'); }
+}
+
+async function runScheduleNow(sid) {
+  const res = await fetch(`/api/schedules/${sid}/run-now`, { method:'POST', headers: authHeaders() });
+  if (res.status === 401) { handle401(); return; }
+  if (res.ok) {
+    logLine('SYS', 'Schedule fired manually — running in the background.', 'sys');
+    setTimeout(loadSchedules, 800);
+  } else {
+    logLine('ERR', 'Could not start schedule.', 'err');
+  }
+}
+
+async function deleteSchedule(sid, name) {
+  if (!confirm(`Delete schedule "${name}"?`)) return;
+  const res = await fetch(`/api/schedules/${sid}`, { method:'DELETE', headers: authHeaders() });
+  if (res.status === 401) { handle401(); return; }
+  if (res.ok) { logLine('SYS','Schedule deleted.','sys'); loadSchedules(); }
+}
+
+// CSS rules added inline so we don't need to touch the <style> block
+(function injectSchedCSS() {
+  const css = `
+    .sched-tag { display:inline-block; background:rgba(176,136,255,.12); color:var(--dry); border-radius:3px; padding:1px 6px; font-size:9px; letter-spacing:.04em; }
+    .sched-row:last-child { border-bottom:none; }
+  `;
+  const s = document.createElement('style');
+  s.textContent = css;
+  document.head.appendChild(s);
+})();
 
 boot();
 </script>

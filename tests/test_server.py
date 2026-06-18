@@ -10,6 +10,10 @@ import tempfile
 import sqlite3
 import pytest
 
+# Don't spin up the background APScheduler when importing the server module
+# under tests — its persistent thread would block pytest from exiting.
+os.environ["STARR_DISABLE_SCHEDULER"] = "1"
+
 # Make sure we can import the app
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
 import server as srv
@@ -371,3 +375,69 @@ def test_get_status_uses_api_version(monkeypatch):
     assert "/api/v1/system/status" in seen["url"]
     srv._get_status("h", 8989, "k", api="v3")
     assert "/api/v3/system/status" in seen["url"]
+
+
+# ── Scheduler ─────────────────────────────────────────────────────────────────
+def test_schedule_store_round_trip(tmp_path):
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
+    from schedules import ScheduleStore
+    store = ScheduleStore(tmp_path / ".schedules.json")
+    sched = store.add({
+        "name": "Nightly",
+        "app": "sonarr",
+        "ops": ["integrity", "foreign_keys"],
+        "cron": "0 3 * * *",
+    })
+    assert sched["id"]
+    assert sched["skip_if_clean"] is True
+    assert sched["enabled"] is True
+    assert (tmp_path / ".schedules.json").exists()
+
+    # Reload from disk
+    store2 = ScheduleStore(tmp_path / ".schedules.json")
+    assert len(store2.all()) == 1
+    assert store2.get(sched["id"])["name"] == "Nightly"
+
+    # Update
+    updated = store2.update(sched["id"], {"enabled": False})
+    assert updated["enabled"] is False
+
+    # Delete
+    assert store2.delete(sched["id"]) is True
+    assert store2.get(sched["id"]) is None
+
+
+def test_schedule_store_validates(tmp_path):
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
+    from schedules import ScheduleStore
+    store = ScheduleStore(tmp_path / ".s.json")
+    with pytest.raises(ValueError, match="app"):
+        store.add({"app": "prowlarr", "ops": ["integrity"], "cron": "0 3 * * *"})
+    with pytest.raises(ValueError, match="ops"):
+        store.add({"app": "sonarr", "ops": ["bad"], "cron": "0 3 * * *"})
+    with pytest.raises(ValueError, match="cron"):
+        store.add({"app": "sonarr", "ops": ["integrity"], "cron": "every other tuesday"})
+
+
+def test_probe_db_clean_skips_repair(monkeypatch, tmp_path):
+    """When skip_if_clean is set and the probe reports clean, the worker must
+    NOT call _step_shutdown / _step_backup / _step_repair."""
+    srv._job.reset()
+    db = tmp_path / "src.db"
+    sqlite3.connect(str(db)).execute("CREATE TABLE t(x)").connection.commit()
+
+    monkeypatch.setattr(srv, "_step_preflight", lambda cfg: str(db))
+    monkeypatch.setattr(srv, "_probe_db_clean", lambda p: (True, "clean"))
+    called = []
+    monkeypatch.setattr(srv, "_step_shutdown", lambda cfg: called.append("shutdown") or True)
+    monkeypatch.setattr(srv, "_step_backup",   lambda cfg, p: called.append("backup") or "x")
+    monkeypatch.setattr(srv, "_step_repair",   lambda cfg, p: called.append("repair") or {})
+    monkeypatch.setattr(srv, "_step_restart",  lambda cfg, r: called.append("restart"))
+
+    srv._repair_worker({"app": "sonarr", "host": "h", "port": 1, "apikey": "k",
+                        "ops": ["integrity"], "skip_if_clean": True})
+
+    assert called == [], f"clean probe must short-circuit; got {called}"
+    assert srv._job.result["status"] == "clean"

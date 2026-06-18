@@ -297,6 +297,29 @@ def _step_preflight(cfg) -> str | None:
     return db_path
 
 
+def _probe_db_clean(db_path: str) -> tuple[bool, str]:
+    """Open the DB read-only and run quick_check + foreign_key_check while the
+    app may still be running. Returns (is_clean, reason). Used by the scheduler's
+    skip-if-clean optimisation — never modifies the file."""
+    try:
+        uri = f"file:{db_path}?mode=ro&immutable=0"
+        con = sqlite3.connect(uri, uri=True, timeout=10)
+    except sqlite3.Error as e:
+        return False, f"open failed: {e}"
+    try:
+        rows = con.execute("PRAGMA quick_check").fetchall()
+        if not rows or rows[0][0] != "ok":
+            return False, f"quick_check: {len(rows)} issue(s)"
+        rows = con.execute("PRAGMA foreign_key_check").fetchall()
+        if rows:
+            return False, f"foreign_key_check: {len(rows)} violation(s)"
+        return True, "clean"
+    except sqlite3.Error as e:
+        return False, f"probe failed: {e}"
+    finally:
+        con.close()
+
+
 def _step_shutdown(cfg) -> bool:
     emit("PHASE", "── Step 2/6  Shutdown ───────────────────────────────────", "phase")
     if cfg.get("dry_run"):
@@ -614,6 +637,22 @@ def _repair_worker(cfg: dict) -> None:
             _job.result = {"status": "error", "message": "Preflight failed"}
             return
 
+        # Skip-if-clean (used by scheduled jobs): probe the DB read-only while
+        # the app is still running. If quick_check + FK both pass, abort the
+        # whole run — no shutdown, no backup, no mutating ops.
+        if cfg.get("skip_if_clean") and not cfg.get("dry_run"):
+            emit("PHASE", "── Skip-if-clean probe ─────────────────────────────────", "phase")
+            ok, reason = _probe_db_clean(db_path)
+            if ok:
+                emit("OK", "Database is clean — skipping repair (no shutdown, no backup).", "ok")
+                _job.result = {
+                    "status":  "clean",
+                    "message": "Database is clean; skipped scheduled run.",
+                    "elapsed": _elapsed(),
+                }
+                return
+            emit("INFO", f"Probe found issues ({reason}); running full repair.", "info")
+
         if not _step_shutdown(cfg):
             _job.result = {"status": "error", "message": "Shutdown failed or aborted"}
             return
@@ -868,6 +907,108 @@ def api_backups():
                 "created":  datetime.fromtimestamp(stat.st_mtime).isoformat(),
             })
     return jsonify(backups)
+
+
+# ---------------------------------------------------------------------------
+# Scheduler — automatic repair runs on a cron
+# ---------------------------------------------------------------------------
+def _run_scheduled(cfg: dict) -> dict:
+    """Synchronously runs a repair via the existing _repair_worker and returns
+    a serialisable summary (used by ScheduleRunner to stamp last_run)."""
+    if _job.running:
+        return {"status": "skipped", "reason": "another job in progress"}
+    sched_name = cfg.get("_schedule_name") or "schedule"
+    log.info("Scheduled run firing: %s", sched_name)
+    # Server-side fill-in mirrors what api_start does for ad-hoc runs.
+    app_name = cfg["app"]
+    cfg.setdefault("host",    app.config.get(f"{app_name.upper()}_HOST")    or "localhost")
+    cfg.setdefault("port",    app.config.get(f"{app_name.upper()}_PORT")    or APP_DEFAULTS[app_name]["port"])
+    cfg.setdefault("apikey",  app.config.get(f"{app_name.upper()}_APIKEY")  or "")
+    cfg.setdefault("urlbase", app.config.get(f"{app_name.upper()}_URLBASE") or "")
+    cfg["api"] = APP_DEFAULTS[app_name]["api"]
+    if not cfg.get("container_name"):
+        cfg["container_name"] = app.config.get(f"{app_name.upper()}_CONTAINER", "")
+    if not cfg.get("apikey"):
+        return {"status": "error", "message": f"{app_name.upper()}_APIKEY not configured"}
+    _repair_worker(cfg)
+    return dict(_job.result or {"status": "unknown"})
+
+
+from schedules import ScheduleStore, ScheduleRunner   # noqa: E402
+import atexit                                          # noqa: E402
+
+# Init schedule store + runner. Tests can disable the runner via env to avoid
+# leaving an APScheduler thread alive (which would block pytest from exiting).
+_schedule_store = ScheduleStore(app.config["BACKUP_DIR"] / ".starr-schedules.json")
+if os.environ.get("STARR_DISABLE_SCHEDULER") == "1":
+    _schedule_runner = None
+    log.info("Scheduler disabled by STARR_DISABLE_SCHEDULER=1")
+else:
+    _schedule_runner = ScheduleRunner(_schedule_store, _run_scheduled, lambda: _job.running)
+    atexit.register(lambda: _schedule_runner._scheduler.shutdown(wait=False))
+
+
+def _scheduler_required():
+    if _schedule_runner is None:
+        return jsonify({"error": "scheduler disabled"}), 503
+    return None
+
+
+def _decorate_schedule(s: dict) -> dict:
+    """Attach computed fields (next_run) before sending to the client."""
+    next_run = _schedule_runner.next_run_for(s["id"]) if _schedule_runner else None
+    return {**s, "next_run": next_run}
+
+
+@app.route("/api/schedules")
+@require_api_key
+def api_schedules_list():
+    return jsonify([_decorate_schedule(s) for s in _schedule_store.all()])
+
+
+@app.route("/api/schedules", methods=["POST"])
+@require_api_key
+def api_schedules_create():
+    payload = request.get_json(force=True) or {}
+    try:
+        sched = _schedule_store.add(payload)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if _schedule_runner: _schedule_runner.reload()
+    return jsonify(_decorate_schedule(sched)), 201
+
+
+@app.route("/api/schedules/<sid>", methods=["PUT"])
+@require_api_key
+def api_schedules_update(sid):
+    payload = request.get_json(force=True) or {}
+    try:
+        sched = _schedule_store.update(sid, payload)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if not sched:
+        return jsonify({"error": "not found"}), 404
+    if _schedule_runner: _schedule_runner.reload()
+    return jsonify(_decorate_schedule(sched))
+
+
+@app.route("/api/schedules/<sid>", methods=["DELETE"])
+@require_api_key
+def api_schedules_delete(sid):
+    if not _schedule_store.delete(sid):
+        return jsonify({"error": "not found"}), 404
+    if _schedule_runner: _schedule_runner.reload()
+    return jsonify({"status": "deleted"})
+
+
+@app.route("/api/schedules/<sid>/run-now", methods=["POST"])
+@require_api_key
+def api_schedules_run_now(sid):
+    err = _scheduler_required()
+    if err: return err
+    if not _schedule_runner.run_now(sid):
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"status": "started"}), 202
 
 
 if __name__ == "__main__":
