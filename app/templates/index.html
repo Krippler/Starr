@@ -770,6 +770,11 @@ function unlockUI() {
   loadBackups();
   loadSchedules();
   setStatus('READY', 'var(--ok)', false);
+  // Keep an SSE connection open while authenticated so scheduled (and any
+  // server-initiated) jobs stream into the Repair Log live instead of
+  // running in the background.
+  connectSSE();
+  syncRepairStatus();
 }
 function lockUI() {
   _unlocked = false;
@@ -780,6 +785,7 @@ function lockUI() {
   document.getElementById('authGate').style.display  = '';
   document.getElementById('webkey').focus();
   setGateFoot('The Web Key matches the <code>SECRET_KEY</code> set on the Starr container.', '');
+  if (sseSource) { sseSource.close(); sseSource = null; }
 }
 function setGateFoot(html, cls /* '' | 'ok' | 'err' */) {
   const el = document.getElementById('gateFoot');
@@ -973,19 +979,12 @@ async function startRepair() {
   const res = await fetch('/api/repair/start', { method:'POST', headers:authHeaders(), body:JSON.stringify(payload) });
   if (res.status===401) { handle401(); return; }
   if (!res.ok) { const e=await res.json(); logLine('ERR',e.error||'Failed to start repair.','err'); return; }
-  running = true;
-  document.getElementById('runBtn').disabled = true;
-  document.getElementById('stopBtn').style.display = 'flex';
-  document.getElementById('resultGrid').classList.remove('visible');
-  document.getElementById('progressWrap').classList.add('visible');
-  setStatus('RUNNING','var(--app)',true);
+  enterRunningMode();
   opOrder = [...selectedOps];
   document.getElementById('opPills').innerHTML = opOrder.map(id => {
     const op = APPS[currentApp].ops.find(o=>o.id===id);
     return op ? `<div class="op-pill" id="pill_${id}">${op.icon} ${op.name}</div>` : '';
   }).join('');
-  document.getElementById('progressFill').style.width = '0%';
-  document.getElementById('progressPct').textContent = '0%';
   connectSSE();
 }
 
@@ -1008,13 +1007,48 @@ async function stopRepair() {
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
 function connectSSE() {
-  if (sseSource) sseSource.close();
+  if (sseSource) return;            // idempotent
   sseSource = new EventSource(authUrl('/api/repair/stream'));
   sseSource.onmessage = e => { try { handleEntry(JSON.parse(e.data)); } catch(_){} };
   sseSource.onerror = () => { if(running) logLine('WARN','SSE connection lost — retrying…','warn'); };
 }
 
+// Sync the dashboard with whatever the server thinks is happening. Called
+// on unlock so a scheduled run that's already in progress (or just started
+// while we were locked) lights up the UI like a manual Run Repair would.
+async function syncRepairStatus() {
+  try {
+    const res = await fetch('/api/repair/status', { headers: authHeaders() });
+    if (!res.ok) return;
+    const d = await res.json();
+    if (d.running && !running) enterRunningMode({ silent: true });
+  } catch(_){}
+}
+
+// Switch the UI into "a repair is running" presentation. Used both by the
+// local Run Repair button and by syncRepairStatus / SSE when a scheduled
+// job starts on its own.
+function enterRunningMode({ silent = false } = {}) {
+  if (running) return;
+  running = true;
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('stopBtn').style.display = 'flex';
+  document.getElementById('resultGrid').classList.remove('visible');
+  document.getElementById('progressWrap').classList.add('visible');
+  setStatus('RUNNING','var(--app)',true);
+  document.getElementById('progressFill').style.width = '0%';
+  document.getElementById('progressPct').textContent = '0%';
+  resetPhases();
+  if (!silent) logLine('SYS','Live job detected — streaming into the repair log.','sys');
+}
+
 function handleEntry(entry) {
+  // A new job (manual or scheduled) starts with this SYS line. If the UI
+  // isn't already in "running" mode (e.g. a scheduled job fired with no
+  // manual click), light it up so the user sees what's happening.
+  if (entry.cls === 'sys' && /job started for/i.test(entry.msg || '')) {
+    if (!running) enterRunningMode({ silent: true });
+  }
   if (entry.cls==='phase') {
     const t = entry.msg.toLowerCase();
     if (t.includes('step 1')||t.includes('preflight')) setPhase(1,'active');
@@ -1051,7 +1085,10 @@ function finishJob() {
   running = false;
   document.getElementById('runBtn').disabled = false;
   document.getElementById('stopBtn').style.display = 'none';
-  if (sseSource) { setTimeout(()=>{ sseSource.close(); sseSource=null; },5000); }
+  // Keep SSE open while authenticated so the next scheduled run still streams
+  // into the log. The stream is only closed by lockUI() / page unload.
+  // Reload schedules so the row reflects the new last_status / next_run.
+  if (typeof loadSchedules === 'function') loadSchedules();
 }
 
 function setPhase(n,state) { const el=document.getElementById('ph'+n); if(el) el.className='phase '+state; }
