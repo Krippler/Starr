@@ -326,3 +326,23 @@ def test_repair_worker_aborts_when_backup_fails(monkeypatch, tmp_path):
     assert repair_calls == [], "Repair must NOT run when backup fails"
     assert srv._job.result["status"] == "error"
     assert "backup" in srv._job.result["message"].lower()
+
+
+def test_worker_emits_done_event_on_preflight_failure(monkeypatch):
+    """If _step_preflight fails (e.g. DB not mounted), the worker must still
+    emit a terminal __DONE__ event so the UI clears 'running' state and the
+    Stop button isn't required."""
+    srv._job.reset()
+    monkeypatch.setattr(srv, "_step_preflight", lambda cfg: None)
+    monkeypatch.setattr(srv, "_step_shutdown",  lambda cfg: True)  # not reached
+    monkeypatch.setattr(srv, "_step_backup",    lambda cfg, p: None)  # not reached
+    monkeypatch.setattr(srv, "_step_repair",    lambda cfg, p: {})    # not reached
+    monkeypatch.setattr(srv, "_step_restart",   lambda cfg, r: None)  # not reached
+
+    srv._repair_worker({"app": "sonarr", "host": "x", "port": 1, "apikey": "k",
+                        "ops": ["integrity"]})
+
+    assert srv._job.running is False
+    done_entries = [h for h in srv._job.history if h.get("cls") == "__done__"]
+    assert len(done_entries) == 1, "exactly one __DONE__ should be emitted"
+    assert srv._job.result["status"] == "error"
