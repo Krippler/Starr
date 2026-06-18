@@ -4,7 +4,6 @@
 [![Docker Image Size](https://img.shields.io/docker/image-size/krippler52/starr/latest?style=flat-square)](https://hub.docker.com/r/krippler52/starr)
 [![GitHub release](https://img.shields.io/github/v/release/krippler/starr?style=flat-square)](https://github.com/Krippler/Starr/releases)
 [![CI](https://github.com/Krippler/Starr/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/Krippler/Starr/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
 
 **Web UI tool for diagnosing and repairing Sonarr, Radarr, Sportarr, and Lidarr SQLite databases.**
 
