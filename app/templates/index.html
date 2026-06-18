@@ -436,12 +436,9 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
   <div class="warn-box">
     <div class="warn-box-icon">⚠️</div>
     <div class="warn-box-body">
-      <!-- Updated dynamically by updatePlaceholders() -->
+      <!-- Both lines are updated dynamically by syncShutdownWarning() -->
       <strong id="warnTitle">Sonarr will be shut down before any repairs are performed</strong>
-      The repair sequence calls <code>/api/v3/system/shutdown</code>, waits for the process to go offline,
-      creates a timestamped backup in <code>/backups</code>, runs SQLite operations on the idle file,
-      then waits for the app to come back online automatically.
-      Do not run while active downloads are in progress.
+      <span id="warnBody"></span>
     </div>
   </div>
 
@@ -610,14 +607,31 @@ function updatePlaceholders(app) {
 }
 
 // Phrases the pre-repair warning banner to match the actual shutdown mode:
-// docker-managed when a container name is set, otherwise the *arr API shutdown.
+// docker-managed when a container name is set, otherwise the *arr API shutdown
+// (using the app's correct API version — Lidarr is v1, others v3).
 function syncShutdownWarning() {
   const cfg = APPS[currentApp];
   const pretty = cfg.name.charAt(0) + cfg.name.slice(1).toLowerCase();
+  const api = cfg.api || 'v3';
   const container = (document.getElementById('containerName')?.value || '').trim();
-  document.getElementById('warnTitle').textContent = container
-    ? `${pretty}'s container will be stopped (docker stop ${container}) before any repairs are performed`
-    : `${pretty} will be shut down before any repairs are performed`;
+  const title = document.getElementById('warnTitle');
+  const body  = document.getElementById('warnBody');
+
+  if (container) {
+    title.textContent = `${pretty}'s container will be stopped (docker stop ${escHtml(container)}) before any repairs are performed`;
+    body.innerHTML =
+      ` The repair sequence runs <code>docker stop ${escHtml(container)}</code>, ` +
+      `creates a timestamped backup in <code>/backups</code>, runs SQLite operations on the idle file, ` +
+      `then <code>docker start ${escHtml(container)}</code> and waits for ${pretty} to come back online. ` +
+      `Do not run while active downloads are in progress.`;
+  } else {
+    title.textContent = `${pretty} will be shut down before any repairs are performed`;
+    body.innerHTML =
+      ` The repair sequence calls <code>/api/${api}/system/shutdown</code>, waits for the process to go offline, ` +
+      `creates a timestamped backup in <code>/backups</code>, runs SQLite operations on the idle file, ` +
+      `then waits for the app to come back online automatically. ` +
+      `Do not run while active downloads are in progress.`;
+  }
 }
 
 // ── Default-key warning + auto-unlock ─────────────────────────────────────────
