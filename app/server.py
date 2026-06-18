@@ -81,10 +81,12 @@ logging.getLogger().setLevel(app.config["LOG_LEVEL"])
 CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
 
 APP_DEFAULTS = {
-    "sonarr":   {"port": 8989, "dbname": "sonarr.db"},
-    "radarr":   {"port": 7878, "dbname": "radarr.db"},
-    "lidarr":   {"port": 8686, "dbname": "lidarr.db"},
-    "sportarr": {"port": 1867, "dbname": "sportarr.db"},
+    # api: Sonarr/Radarr (and the Sonarr-fork Sportarr) speak /api/v3;
+    # Lidarr (like Readarr) speaks /api/v1.
+    "sonarr":   {"port": 8989, "dbname": "sonarr.db",   "api": "v3"},
+    "radarr":   {"port": 7878, "dbname": "radarr.db",   "api": "v3"},
+    "lidarr":   {"port": 8686, "dbname": "lidarr.db",   "api": "v1"},
+    "sportarr": {"port": 1867, "dbname": "sportarr.db", "api": "v3"},
 }
 
 # After the app first reads offline, re-poll this many times at this interval
@@ -191,18 +193,18 @@ def _base_url(host, port, urlbase="") -> str:
     return f"http://{host}:{port}{ub}"
 
 
-def _get_status(host, port, apikey, urlbase="", timeout=5):
+def _get_status(host, port, apikey, urlbase="", timeout=5, api="v3"):
     try:
-        url = f"{_base_url(host, port, urlbase)}/api/v3/system/status"
+        url = f"{_base_url(host, port, urlbase)}/api/{api}/system/status"
         r = requests.get(url, headers={"X-Api-Key": apikey}, timeout=timeout)
         return r.json() if r.status_code == 200 else None
     except Exception:
         return None
 
 
-def _shutdown_app(host, port, apikey, urlbase=""):
+def _shutdown_app(host, port, apikey, urlbase="", api="v3"):
     try:
-        url = f"{_base_url(host, port, urlbase)}/api/v3/system/shutdown"
+        url = f"{_base_url(host, port, urlbase)}/api/{api}/system/shutdown"
         r = requests.post(url, headers={"X-Api-Key": apikey}, timeout=10)
         r.raise_for_status()
     except requests.RequestException as e:
@@ -255,7 +257,8 @@ def _step_preflight(cfg) -> str | None:
     """Returns resolved db path or None on failure."""
     emit("PHASE", "── Step 1/6  Preflight ──────────────────────────────────", "phase")
     host, port, apikey, urlbase = cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", "")
-    st = _get_status(host, port, apikey, urlbase)
+    api = cfg.get("api", "v3")
+    st = _get_status(host, port, apikey, urlbase, api=api)
     if not st:
         emit("ERR", f"Cannot reach {cfg['app']} at {_base_url(host, port, urlbase)}", "err")
         emit("ERR", "Check host / port / apikey settings.", "err")
@@ -297,11 +300,16 @@ def _step_preflight(cfg) -> str | None:
 def _step_shutdown(cfg) -> bool:
     emit("PHASE", "── Step 2/6  Shutdown ───────────────────────────────────", "phase")
     if cfg.get("dry_run"):
-        emit("DRY", "[DRY] Would POST /api/v3/system/shutdown", "dry"); return True
+        if (cfg.get("container_name") or "").strip():
+            emit("DRY", f"[DRY] Would docker stop '{cfg['container_name']}'", "dry")
+        else:
+            emit("DRY", f"[DRY] Would POST /api/{cfg.get('api','v3')}/system/shutdown", "dry")
+        return True
     if cfg.get("skip_shutdown"):
         emit("WARN", "Skipping shutdown (skip_shutdown=true).", "warn"); return True
 
     host, port, apikey, urlbase = cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase","")
+    api = cfg.get("api", "v3")
     container_name = (cfg.get("container_name") or "").strip()
 
     # Preferred path: if the user supplied a container name and we can reach
@@ -326,7 +334,7 @@ def _step_shutdown(cfg) -> bool:
                 if _job.aborted:
                     emit("WARN", "Aborted during shutdown wait.", "warn"); return False
                 time.sleep(1)
-                if _get_status(host, port, apikey, urlbase, timeout=2) is None:
+                if _get_status(host, port, apikey, urlbase, timeout=2, api=api) is None:
                     emit("OK", f"Container '{container_name}' stopped. Waiting 2s for file handles to close...", "ok")
                     time.sleep(2)
                     return True
@@ -334,7 +342,7 @@ def _step_shutdown(cfg) -> bool:
             return True
 
     emit("INFO", f"Sending shutdown to {cfg['app'].capitalize()}...", "info")
-    _shutdown_app(host, port, apikey, urlbase)
+    _shutdown_app(host, port, apikey, urlbase, api=api)
     emit("OK",   "Shutdown command sent.", "ok")
 
     emit("INFO", "Polling until offline (2s intervals, 60s timeout)...", "info")
@@ -343,7 +351,7 @@ def _step_shutdown(cfg) -> bool:
         if _job.aborted:
             emit("WARN", "Aborted during shutdown wait.", "warn"); return False
         time.sleep(2)
-        if _get_status(host, port, apikey, urlbase, timeout=2) is None:
+        if _get_status(host, port, apikey, urlbase, timeout=2, api=api) is None:
             # First offline read. But a container with a restart policy
             # (restart: unless-stopped) will be brought back automatically a
             # few seconds after the app process exits — so confirm it STAYS
@@ -353,7 +361,7 @@ def _step_shutdown(cfg) -> bool:
                 if _job.aborted:
                     emit("WARN", "Aborted during shutdown wait.", "warn"); return False
                 time.sleep(SHUTDOWN_STABILITY_INTERVAL)
-                if _get_status(host, port, apikey, urlbase, timeout=2) is not None:
+                if _get_status(host, port, apikey, urlbase, timeout=2, api=api) is not None:
                     emit("ERR", "App came back ONLINE after shutdown — its container restart policy is restarting it.", "err")
                     emit("ERR", "Starr will not repair a database the app may reopen mid-operation.", "err")
                     emit("ERR", "Stop the app's CONTAINER (not just the app), then re-run with 'Skip shutdown' enabled:", "err")
@@ -533,6 +541,7 @@ def _step_restart(cfg, results) -> None:
         return
 
     host, port, apikey, urlbase = cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", "")
+    api = cfg.get("api", "v3")
 
     # If we stopped the container ourselves, start it ourselves. The user's
     # restart policy is not enough — `docker stop` cleared the container's
@@ -564,7 +573,7 @@ def _step_restart(cfg, results) -> None:
             break
         time.sleep(5)
         attempt += 1
-        st = _get_status(host, port, apikey, urlbase, timeout=3)
+        st = _get_status(host, port, apikey, urlbase, timeout=3, api=api)
         if st:
             emit("OK", f"{cfg['app'].capitalize()} is online — v{st.get('version','?')} OK", "ok")
             emit("OK", "Repair complete. All done!", "ok")
@@ -626,7 +635,7 @@ def _repair_worker(cfg: dict) -> None:
         # online after _step_shutdown returned. Re-verify it's still offline
         # immediately before we open and mutate the database.
         if not cfg.get("skip_shutdown") and not cfg.get("dry_run"):
-            if _get_status(cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", "")) is not None:
+            if _get_status(cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", ""), api=cfg.get("api", "v3")) is not None:
                 emit("ERR", "App is back ONLINE just before repair — aborting to protect the database.", "err")
                 emit("ERR", "Its container restart policy likely restarted it. Stop the container and re-run with 'Skip shutdown':", "err")
                 emit("SYS", f"  docker stop {cfg['app']}", "sys")
@@ -763,6 +772,8 @@ def api_start():
         cfg["port"] = app.config.get(f"{app_name.upper()}_PORT") or APP_DEFAULTS[app_name]["port"]
     if not cfg.get("container_name"):
         cfg["container_name"] = app.config.get(f"{app_name.upper()}_CONTAINER", "")
+    # API version is per-app and not user-overridable (Lidarr=v1, others=v3)
+    cfg["api"] = APP_DEFAULTS[app_name]["api"]
 
     if not cfg.get("apikey"):
         return jsonify({"error": "apikey is required"}), 400

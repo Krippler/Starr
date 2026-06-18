@@ -346,3 +346,28 @@ def test_worker_emits_done_event_on_preflight_failure(monkeypatch):
     done_entries = [h for h in srv._job.history if h.get("cls") == "__done__"]
     assert len(done_entries) == 1, "exactly one __DONE__ should be emitted"
     assert srv._job.result["status"] == "error"
+
+
+def test_lidarr_uses_api_v1():
+    """Lidarr must be registered with the v1 API; Sonarr/Radarr/Sportarr v3."""
+    assert srv.APP_DEFAULTS["lidarr"]["api"] == "v1"
+    assert srv.APP_DEFAULTS["sonarr"]["api"] == "v3"
+    assert srv.APP_DEFAULTS["radarr"]["api"] == "v3"
+    assert srv.APP_DEFAULTS["sportarr"]["api"] == "v3"
+
+
+def test_get_status_uses_api_version(monkeypatch):
+    """_get_status must hit /api/<version>/system/status for the given app."""
+    seen = {}
+    class FakeResp:
+        status_code = 200
+        def json(self): return {"version": "x"}
+    def fake_get(url, headers=None, timeout=None):
+        seen["url"] = url
+        return FakeResp()
+    monkeypatch.setattr(srv.requests, "get", fake_get)
+
+    srv._get_status("h", 8686, "k", api="v1")
+    assert "/api/v1/system/status" in seen["url"]
+    srv._get_status("h", 8989, "k", api="v3")
+    assert "/api/v3/system/status" in seen["url"]
