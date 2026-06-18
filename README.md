@@ -50,11 +50,15 @@ docker run -d \
   -v /mnt/user/appdata/radarr:/data/radarr \
   -v /mnt/user/appdata/lidarr:/data/lidarr \
   -v /mnt/user/appdata/starr/backups:/backups \
+  -v /var/run/docker.sock:/var/run/docker.sock \
   -e SONARR_HOST=sonarr \
   -e SONARR_APIKEY=your-api-key \
+  -e SONARR_CONTAINER=sonarr \
   -e SECRET_KEY=your-secret-here \
   krippler52/starr:1.0.4
 ```
+
+> The `docker.sock` mount + `SONARR_CONTAINER` enable [container-managed shutdown](#-container-managed-shutdown-recommended-for-docker--unraid). Omit both to use the app's shutdown API instead.
 
 **Image tags** — published to both Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`):
 
@@ -100,20 +104,71 @@ docker run -d \
 | `SONARR_PORT` | `8989` | Sonarr HTTP port |
 | `SONARR_APIKEY` | _(blank)_ | Sonarr API key _(masked in template)_ |
 | `SONARR_URLBASE` | _(blank)_ | Sonarr URL base, e.g. `/sonarr` |
+| `SONARR_CONTAINER` | `sonarr` | Sonarr container name — when set + the Docker socket is mounted, Starr stops/starts the container directly (see [Container-managed shutdown](#-container-managed-shutdown-recommended-for-docker--unraid)) |
 | `RADARR_HOST` | _(blank)_ | Radarr hostname or IP |
 | `RADARR_PORT` | `7878` | Radarr HTTP port |
 | `RADARR_APIKEY` | _(blank)_ | Radarr API key |
 | `RADARR_URLBASE` | _(blank)_ | Radarr URL base |
+| `RADARR_CONTAINER` | `radarr` | Radarr container name (container-managed shutdown) |
 | `LIDARR_HOST` | _(blank)_ | Lidarr hostname or IP |
 | `LIDARR_PORT` | `8686` | Lidarr HTTP port |
 | `LIDARR_APIKEY` | _(blank)_ | Lidarr API key |
 | `LIDARR_URLBASE` | _(blank)_ | Lidarr URL base |
+| `LIDARR_CONTAINER` | `lidarr` | Lidarr container name (container-managed shutdown) |
 | `SPORTARR_HOST`   | _(blank)_ | Sportarr hostname or IP |
 | `SPORTARR_PORT`   | `1867`    | Sportarr HTTP port |
 | `SPORTARR_APIKEY` | _(blank)_ | Sportarr API key |
 | `SPORTARR_URLBASE`| _(blank)_ | Sportarr URL base |
+| `SPORTARR_CONTAINER` | `sportarr` | Sportarr container name (container-managed shutdown) |
 
 All connection settings can also be entered directly in the web UI — env vars just pre-fill the fields.
+
+---
+
+## 🐳 Container-managed shutdown (recommended for Docker / Unraid)
+
+On any host that runs the *arr app with a **restart policy** (`--restart unless-stopped`, the Unraid default), the app's own `/api/v3/system/shutdown` endpoint can't keep it down — Docker restarts the container seconds later, while Starr is mid-repair. Starr detects this and refuses to repair a database the app may reopen.
+
+The reliable fix is to let Starr **stop and start the app's container directly**:
+
+1. **Mount the Docker socket** into the Starr container — `-v /var/run/docker.sock:/var/run/docker.sock` (the Unraid template and `docker-compose.yml` include this by default).
+2. **Set the container name** for each app you use — `SONARR_CONTAINER=sonarr`, `RADARR_CONTAINER=radarr`, etc. (defaults match the conventional container names). The value must exactly match the container name shown by `docker ps --format '{{.Names}}'`.
+
+With both in place, the repair sequence becomes: `docker stop sonarr` → backup → SQLite ops on the idle DB → `docker start sonarr`. No restart-policy race, and no need to enable **Skip shutdown**.
+
+If the socket isn't mounted or the container name is unset, Starr falls back to the app's shutdown API (with a stability check). Verify Starr can reach the daemon:
+
+```bash
+docker exec starr python3 -c "import docker; print(docker.from_env().ping())"   # True = ready
+```
+
+> **Security:** mounting `/var/run/docker.sock` grants the Starr container root-equivalent control of the host Docker daemon (the same tradeoff as Portainer / Watchtower / Dockge). It's entirely optional — leave the socket unmounted and the `*_CONTAINER` vars blank to disable.
+
+---
+
+## 🩺 Troubleshooting
+
+### "Cannot reach _appname_ at http://… " (preflight)
+
+This usually means Starr connected fine but the URL wasn't right. Two common causes:
+
+- **Bridge IP vs published port (Docker / Unraid).** If your *arr container is on Docker's default `bridge` network, the host IP (e.g. `192.168.1.x:8989`) hairpins back through NAT — and that doesn't always work from another bridge container like Starr. Use the *arr's **container bridge IP** instead:
+  ```bash
+  docker inspect sonarr --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
+  # → 172.17.0.x — use this as SONARR_HOST
+  ```
+  More durable option: put Starr and the *arr apps on the **same user-defined Docker network**, then use container names — `SONARR_HOST=sonarr`. Names only resolve on user-defined networks, not on the default bridge.
+- **Wrong API version.** Sonarr / Radarr / Sportarr all speak `/api/v3/…`, but **Lidarr (and Readarr) speak `/api/v1/…`**. Starr handles this automatically per app; if you've forked the code and added a new *arr, register its API version in `APP_DEFAULTS`.
+
+### `True` from `docker exec starr python3 -c "import docker; …ping()"` but no container-managed shutdown
+The Docker socket is reachable, so it's the env var. Confirm `SONARR_CONTAINER` is set on the **Starr** container (not the *arr container), and that the value exactly matches `docker ps --format '{{.Names}}'` (capitalization matters). On a fresh dashboard load you should see `container` listed in the SYS line:
+```
+SONARR config loaded from environment: host, port, container, apikey
+```
+If `container` is missing, the env var didn't make it into Starr.
+
+### Backup "Permission denied"
+The entrypoint chowns `/backups` to `PUID:PGID` on every start, so this is rare. If you hit it once, set `PUID`/`PGID` to match the owner of `/mnt/user/appdata/starr/backups` (or `chown -R PUID:PGID …` once). Note that `/data/<app>` mounts are **not** chowned — they're owned by the *arr apps.
 
 ---
 
