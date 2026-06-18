@@ -13,3 +13,6 @@ gunicorn==23.0.0
 # directly (when /var/run/docker.sock is mounted), which is more reliable than
 # the *arr shutdown API on hosts with a container restart policy.
 docker==7.1.0
+
+# Background scheduler for /api/schedules — fires repair jobs on a cron.
+APScheduler==3.10.4
