@@ -318,7 +318,7 @@ Starr/
 
 ## 📄 License
 
-MIT — see [LICENSE](LICENSE)
+
 
 ---
 
