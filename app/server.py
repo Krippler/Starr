@@ -782,33 +782,65 @@ def api_discover():
     return jsonify(_refresh_discovery())
 
 
+def _request_host_only() -> str:
+    """The hostname the browser used to reach Starr, no port. Falls back to
+    'localhost' if the request context isn't available."""
+    try:
+        h = (request.host or "").split(":")[0]
+        return h or "localhost"
+    except RuntimeError:
+        return "localhost"
+
+
 @app.route("/api/apps")
 @require_api_key
 def api_apps():
     """Per-app configuration. Layered: discovery → env vars → request body.
 
-    The dashboard pre-fills each app's form from the merged record. URLs and
-    DB paths come from Docker discovery whenever possible; the apikey is the
-    one thing the user always provides (it's a secret and not derivable).
+    For each app we return:
+      - `url`           : what the user sees in the form. Host-perspective
+                          (e.g. http://192.168.10.37:8989) so the value is
+                          recognisable from a browser on the LAN.
+      - `internal_url`  : what Starr will actually use to talk to the *arr
+                          container (bridge IP + internal port). This is what
+                          actually connects across Docker's default bridge
+                          network. The user never sees / edits this.
+      - `apikey`, `container_name`, `db_path` come from env / discovery.
+
+    The host used to build `url` is derived from request.host, so it matches
+    whichever IP/hostname the user typed into their browser to reach Starr.
     """
     apps = []
-    discovery_blob = _discovery_cache.get("apps") or []
-    discovered = {d["app"]: d for d in discovery_blob}
+    discovered = {d["app"]: d for d in (_discovery_cache.get("apps") or [])}
+    browser_host = _request_host_only()
     for name in ("sonarr", "radarr", "lidarr", "sportarr"):
         upper  = name.upper()
         apikey = app.config.get(f"{upper}_APIKEY", "")
         env_url = app.config.get(f"{upper}_URL", "")
         disc   = discovered.get(name, {})
-        url    = env_url or disc.get("url") or ""
-        container_name = disc.get("container_name") or ""
-        if not (apikey or url):
-            # No URL and no apikey set anywhere — skip the entry entirely.
+
+        # Internal URL — used for the actual HTTP call from inside Starr.
+        internal_url = disc.get("url") or ""
+
+        # Display URL — what we render in the form. Order of preference:
+        #   1. explicit *_URL env override (the user wrote it, respect it)
+        #   2. host-perspective URL built from request.host + published port
+        #   3. fall back to the internal bridge URL
+        display_url = env_url
+        if not display_url and disc.get("published_port"):
+            base = f"http://{browser_host}:{disc['published_port']}"
+            display_url = base + (disc.get("urlbase") or "")
+        if not display_url:
+            display_url = internal_url
+
+        if not (apikey or display_url):
             continue
         apps.append({
             "app":            name,
-            "url":            url,
+            "url":            display_url,
+            "internal_url":   internal_url,
             "apikey":         apikey,
-            "container_name": container_name,
+            "container_name": disc.get("container_name") or "",
             "db_path":        disc.get("db_path") or "",
             "discovered":     bool(disc),
             "configured":     bool(apikey),
@@ -824,12 +856,23 @@ def _resolve_request_cfg(cfg: dict) -> tuple[dict, str | None]:
     upper = app_name.upper()
     disc = _discovered_for(app_name)
     # URL: request body wins, else env, else discovery.
-    url = (cfg.get("url") or "").strip() \
+    raw_url = (cfg.get("url") or "").strip() \
           or app.config.get(f"{upper}_URL", "") \
           or (disc.get("url") or "")
-    if not url:
+    if not raw_url:
         return cfg, f"{app_name}: no URL configured and Docker discovery did not find a container."
-    host, port, urlbase = _split_url(url, default_port=APP_DEFAULTS[app_name]["port"])
+
+    # If the request URL matches the host-perspective display URL we returned
+    # from /api/apps (i.e. the user didn't override), prefer the discovered
+    # bridge URL — that's what's actually reachable from inside Starr's own
+    # container.
+    if disc.get("url") and disc.get("published_port"):
+        display_host = (cfg.get("url") or "").strip()
+        h, p, _ = _split_url(display_host) if display_host else ("", 0, "")
+        if p == disc["published_port"]:
+            raw_url = disc["url"]
+
+    host, port, urlbase = _split_url(raw_url, default_port=APP_DEFAULTS[app_name]["port"])
     cfg["host"]    = host
     cfg["port"]    = port
     cfg["urlbase"] = urlbase

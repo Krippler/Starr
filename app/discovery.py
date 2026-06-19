@@ -107,6 +107,21 @@ def _container_env(container) -> dict[str, str]:
     return out
 
 
+def _published_port(container, internal_port: int) -> int | None:
+    """Return the host port the container's <internal_port> is bound to,
+    e.g. for `docker run -p 8989:8989 sonarr` => 8989. None if not bound."""
+    bindings = container.attrs.get("NetworkSettings", {}).get("Ports") or {}
+    entries = bindings.get(f"{internal_port}/tcp") or []
+    for e in entries:
+        hp = e.get("HostPort")
+        if hp:
+            try:
+                return int(hp)
+            except ValueError:
+                pass
+    return None
+
+
 def _config_host_path(container) -> str | None:
     """Where on the host is mounted at the container's /config."""
     for m in container.attrs.get("Mounts", []) or []:
@@ -187,6 +202,7 @@ def discover() -> dict[str, Any]:
         urlbase = (env.get(f"{app.upper()}__APP__URLBASE")  # Sonarr/Radarr
                    or env.get("URLBASE") or "").strip().rstrip("/")
         url = f"http://{ip}:{port}{urlbase}" if ip else None
+        published = _published_port(container, port)
         config_host = _config_host_path(container)
         db_internal = _translate_host_to_internal(
             f"{config_host}/{app}.db" if config_host else None,
@@ -195,6 +211,9 @@ def discover() -> dict[str, Any]:
             "app":              app,
             "container_name":   container.name,
             "url":              url,
+            "internal_port":    port,
+            "published_port":   published,
+            "urlbase":          urlbase,
             "config_host_path": config_host,
             "db_path":          db_internal,
             "missing_appdata":  bool(config_host and host_root and db_internal is None),
