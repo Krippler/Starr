@@ -49,30 +49,22 @@ class Config:
     SECRET_KEY          = os.environ.get("SECRET_KEY", "change-me-in-production")
     MAX_BACKUP_AGE_DAYS = int(os.environ.get("MAX_BACKUP_AGE_DAYS", "7"))
     BACKUP_DIR          = Path(os.environ.get("BACKUP_DIR", "/backups"))
-    DB_DIR              = Path(os.environ.get("DB_DIR", "/data"))
+    # Host's appdata root, mounted in once; per-app paths are derived from
+    # Docker introspection at runtime.
+    APPDATA_DIR         = Path(os.environ.get("APPDATA_DIR", "/appdata"))
     LOG_LEVEL           = os.environ.get("LOG_LEVEL", "INFO")
     CORS_ORIGINS        = os.environ.get("CORS_ORIGINS", "http://localhost:8877")
-    # Pre-configured app connections (can be set via env or UI)
-    SONARR_HOST         = os.environ.get("SONARR_HOST", "")
-    SONARR_PORT         = int(os.environ.get("SONARR_PORT", "8989"))
+    # Only secrets and an optional URL override per app. Everything else
+    # (container name, host port, /config host path) is auto-discovered via
+    # the Docker socket — see app/discovery.py.
     SONARR_APIKEY       = os.environ.get("SONARR_APIKEY", "")
-    SONARR_URLBASE      = os.environ.get("SONARR_URLBASE", "")
-    SONARR_CONTAINER    = os.environ.get("SONARR_CONTAINER", "")
-    RADARR_HOST         = os.environ.get("RADARR_HOST", "")
-    RADARR_PORT         = int(os.environ.get("RADARR_PORT", "7878"))
+    SONARR_URL          = os.environ.get("SONARR_URL", "")
     RADARR_APIKEY       = os.environ.get("RADARR_APIKEY", "")
-    RADARR_URLBASE      = os.environ.get("RADARR_URLBASE", "")
-    RADARR_CONTAINER    = os.environ.get("RADARR_CONTAINER", "")
-    LIDARR_HOST         = os.environ.get("LIDARR_HOST", "")
-    LIDARR_PORT         = int(os.environ.get("LIDARR_PORT", "8686"))
+    RADARR_URL          = os.environ.get("RADARR_URL", "")
     LIDARR_APIKEY       = os.environ.get("LIDARR_APIKEY", "")
-    LIDARR_URLBASE      = os.environ.get("LIDARR_URLBASE", "")
-    LIDARR_CONTAINER    = os.environ.get("LIDARR_CONTAINER", "")
-    SPORTARR_HOST       = os.environ.get("SPORTARR_HOST", "")
-    SPORTARR_PORT       = int(os.environ.get("SPORTARR_PORT", "1867"))
+    LIDARR_URL          = os.environ.get("LIDARR_URL", "")
     SPORTARR_APIKEY     = os.environ.get("SPORTARR_APIKEY", "")
-    SPORTARR_URLBASE    = os.environ.get("SPORTARR_URLBASE", "")
-    SPORTARR_CONTAINER  = os.environ.get("SPORTARR_CONTAINER", "")
+    SPORTARR_URL        = os.environ.get("SPORTARR_URL", "")
 
 app.config.from_object(Config)
 logging.getLogger().setLevel(app.config["LOG_LEVEL"])
@@ -186,16 +178,34 @@ def _elapsed() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Starr API helpers
+# URL helpers — a single 'url' field replaces host / port / urlbase.
 # ---------------------------------------------------------------------------
-def _base_url(host, port, urlbase="") -> str:
+from urllib.parse import urlparse, urlunparse  # noqa: E402
+
+
+def _split_url(url: str, default_port: int = 80) -> tuple[str, int, str]:
+    """Return (host, port, urlbase) parsed from a URL like
+    'http://172.17.0.12:8989/sonarr'. Schemes other than http/https are
+    normalised to http. urlbase has a leading slash if present, no trailing."""
+    if not url:
+        return "", default_port, ""
+    if "://" not in url:
+        url = "http://" + url
+    p = urlparse(url)
+    host = p.hostname or ""
+    port = p.port or default_port
+    base = (p.path or "").rstrip("/")
+    return host, port, base
+
+
+def _base_url_from_parts(host, port, urlbase="") -> str:
     ub = (urlbase or "").rstrip("/")
     return f"http://{host}:{port}{ub}"
 
 
 def _get_status(host, port, apikey, urlbase="", timeout=5, api="v3"):
     try:
-        url = f"{_base_url(host, port, urlbase)}/api/{api}/system/status"
+        url = f"{_base_url_from_parts(host, port, urlbase)}/api/{api}/system/status"
         r = requests.get(url, headers={"X-Api-Key": apikey}, timeout=timeout)
         return r.json() if r.status_code == 200 else None
     except Exception:
@@ -204,7 +214,7 @@ def _get_status(host, port, apikey, urlbase="", timeout=5, api="v3"):
 
 def _shutdown_app(host, port, apikey, urlbase="", api="v3"):
     try:
-        url = f"{_base_url(host, port, urlbase)}/api/{api}/system/shutdown"
+        url = f"{_base_url_from_parts(host, port, urlbase)}/api/{api}/system/shutdown"
         r = requests.post(url, headers={"X-Api-Key": apikey}, timeout=10)
         r.raise_for_status()
     except requests.RequestException as e:
@@ -260,7 +270,7 @@ def _step_preflight(cfg) -> str | None:
     api = cfg.get("api", "v3")
     st = _get_status(host, port, apikey, urlbase, api=api)
     if not st:
-        emit("ERR", f"Cannot reach {cfg['app']} at {_base_url(host, port, urlbase)}", "err")
+        emit("ERR", f"Cannot reach {cfg['app']} at {_base_url_from_parts(host, port, urlbase)}", "err")
         emit("ERR", "Check host / port / apikey settings.", "err")
         return None
 
@@ -268,29 +278,21 @@ def _step_preflight(cfg) -> str | None:
     app_data = st.get("appData", "")
     emit("INFO", f"App data dir: {app_data or '(unknown)'}", "info")
 
+    # Resolve the DB path on Starr's side. Priority:
+    #   1. Explicit db_path from the request body (advanced override).
+    #   2. The discovered path that the auto-detect filled in for this app.
+    #   3. Fallback: APPDATA_DIR/<app>/<dbname> if such a file exists.
+    dbname = APP_DEFAULTS[cfg["app"]]["dbname"]
     db_path = cfg.get("db_path") or ""
     if not db_path:
-        db_path = str(Path(app_data) / APP_DEFAULTS[cfg["app"]]["dbname"])
-        emit("WARN", f"db_path not supplied, auto-detected: {db_path}", "warn")
-
-    # Also check the container-mounted /data path. The documented Unraid /
-    # docker-compose layout mounts the app's config dir at /data/<app>/, so
-    # try /data/<app>/<app>.db first, then fall back to a flat /data/<app>.db.
-    if not Path(db_path).exists():
-        dbname = APP_DEFAULTS[cfg["app"]]["dbname"]
-        candidates = [
-            app.config["DB_DIR"] / cfg["app"] / dbname,
-            app.config["DB_DIR"] / dbname,
-        ]
-        for cand in candidates:
-            if cand.exists():
-                db_path = str(cand)
-                emit("INFO", f"Using mounted path: {db_path}", "info")
-                break
-        else:
-            emit("ERR", f"DB file not found: {db_path}", "err")
-            emit("ERR", "Mount the app's config folder to /data/<app> in the container.", "err")
-            return None
+        fallback = app.config["APPDATA_DIR"] / cfg["app"] / dbname
+        if fallback.exists():
+            db_path = str(fallback)
+            emit("INFO", f"Auto-detected DB path: {db_path}", "info")
+    if not db_path or not Path(db_path).exists():
+        emit("ERR", "Could not locate this app's database file.", "err")
+        emit("ERR", "Mount your host appdata root at /appdata (or pass an explicit db_path).", "err")
+        return None
 
     mb = Path(db_path).stat().st_size / 1_048_576
     emit("OK",   f"DB confirmed: {db_path}  ({mb:.1f} MB)", "ok")
@@ -754,40 +756,96 @@ def api_config():
     }), 200
 
 
+import discovery as _discovery  # noqa: E402
+
+_discovery_cache: dict = {"apps": [], "appdata": {}, "warnings": [], "docker_available": False}
+
+
+def _refresh_discovery() -> dict:
+    """Rescan via Docker and update the in-memory cache. Safe to call often."""
+    global _discovery_cache
+    _discovery_cache = _discovery.discover()
+    return _discovery_cache
+
+
+def _discovered_for(app_name: str) -> dict:
+    for d in _discovery_cache.get("apps") or []:
+        if d.get("app") == app_name:
+            return d
+    return {}
+
+
+@app.route("/api/discover", methods=["POST"])
+@require_api_key
+def api_discover():
+    """Trigger a fresh Docker scan, return the cache."""
+    return jsonify(_refresh_discovery())
+
+
 @app.route("/api/apps")
 @require_api_key
 def api_apps():
-    """Return pre-configured app connections.
+    """Per-app configuration. Layered: discovery → env vars → request body.
 
-    Returns one entry per app whenever any of host / apikey / urlbase has
-    been set via environment, so the UI can pre-fill the form even if the
-    user only configured a subset (e.g. apikey but no host).
-
-    The *arr API keys ARE returned in full so the dashboard form can
-    pre-fill them. This endpoint is gated by the dashboard's own
-    SECRET_KEY, so only an authenticated session can read them — the
-    same posture as the *arr apps' own /api/v3/system/status endpoints.
-    Do NOT expose this endpoint behind a weak SECRET_KEY.
+    The dashboard pre-fills each app's form from the merged record. URLs and
+    DB paths come from Docker discovery whenever possible; the apikey is the
+    one thing the user always provides (it's a secret and not derivable).
     """
     apps = []
+    discovery_blob = _discovery_cache.get("apps") or []
+    discovered = {d["app"]: d for d in discovery_blob}
     for name in ("sonarr", "radarr", "lidarr", "sportarr"):
-        upper = name.upper()
-        host      = app.config.get(f"{upper}_HOST", "")
-        apikey    = app.config.get(f"{upper}_APIKEY", "")
-        urlbase   = app.config.get(f"{upper}_URLBASE", "")
-        container = app.config.get(f"{upper}_CONTAINER", "")
-        if not (host or apikey or urlbase or container):
+        upper  = name.upper()
+        apikey = app.config.get(f"{upper}_APIKEY", "")
+        env_url = app.config.get(f"{upper}_URL", "")
+        disc   = discovered.get(name, {})
+        url    = env_url or disc.get("url") or ""
+        container_name = disc.get("container_name") or ""
+        if not (apikey or url):
+            # No URL and no apikey set anywhere — skip the entry entirely.
             continue
         apps.append({
             "app":            name,
-            "host":           host,
-            "port":           app.config.get(f"{upper}_PORT"),
-            "urlbase":        urlbase,
+            "url":            url,
             "apikey":         apikey,
-            "container_name": container,
+            "container_name": container_name,
+            "db_path":        disc.get("db_path") or "",
+            "discovered":     bool(disc),
             "configured":     bool(apikey),
         })
     return jsonify(apps)
+
+
+def _resolve_request_cfg(cfg: dict) -> tuple[dict, str | None]:
+    """Fill cfg with env + discovery defaults; return (cfg, error_message)."""
+    app_name = (cfg.get("app") or "").lower()
+    if app_name not in APP_DEFAULTS:
+        return cfg, "app must be sonarr, radarr, lidarr, or sportarr"
+    upper = app_name.upper()
+    disc = _discovered_for(app_name)
+    # URL: request body wins, else env, else discovery.
+    url = (cfg.get("url") or "").strip() \
+          or app.config.get(f"{upper}_URL", "") \
+          or (disc.get("url") or "")
+    if not url:
+        return cfg, f"{app_name}: no URL configured and Docker discovery did not find a container."
+    host, port, urlbase = _split_url(url, default_port=APP_DEFAULTS[app_name]["port"])
+    cfg["host"]    = host
+    cfg["port"]    = port
+    cfg["urlbase"] = urlbase
+    cfg["api"]     = APP_DEFAULTS[app_name]["api"]
+    # apikey: request body wins, else env.
+    if not cfg.get("apikey"):
+        cfg["apikey"] = app.config.get(f"{upper}_APIKEY", "")
+    if not cfg.get("apikey"):
+        return cfg, "apikey is required (request body or env)."
+    # Container: request body wins, else discovery.
+    if not cfg.get("container_name"):
+        cfg["container_name"] = disc.get("container_name") or ""
+    # DB path: request body wins, else discovery (preflight will resolve if blank).
+    if not cfg.get("db_path"):
+        cfg["db_path"] = disc.get("db_path") or ""
+    return cfg, None
 
 
 @app.route("/api/repair/start", methods=["POST"])
@@ -797,25 +855,9 @@ def api_start():
         return jsonify({"error": "A repair job is already running."}), 409
 
     cfg = request.get_json(force=True) or {}
-    app_name = cfg.get("app", "").lower()
-    if app_name not in APP_DEFAULTS:
-        return jsonify({"error": "app must be sonarr, radarr, lidarr, or sportarr"}), 400
-
-    # Merge env-configured API key if caller did not supply one
-    env_key = app.config.get(f"{app_name.upper()}_APIKEY", "")
-    if not cfg.get("apikey") and env_key:
-        cfg["apikey"] = env_key
-    if not cfg.get("host"):
-        cfg["host"] = app.config.get(f"{app_name.upper()}_HOST") or "localhost"
-    if not cfg.get("port"):
-        cfg["port"] = app.config.get(f"{app_name.upper()}_PORT") or APP_DEFAULTS[app_name]["port"]
-    if not cfg.get("container_name"):
-        cfg["container_name"] = app.config.get(f"{app_name.upper()}_CONTAINER", "")
-    # API version is per-app and not user-overridable (Lidarr=v1, others=v3)
-    cfg["api"] = APP_DEFAULTS[app_name]["api"]
-
-    if not cfg.get("apikey"):
-        return jsonify({"error": "apikey is required"}), 400
+    cfg, err = _resolve_request_cfg(cfg)
+    if err:
+        return jsonify({"error": err}), 400
 
     # Validate ops list
     ops = cfg.get("ops") or ALL_OPS
@@ -828,7 +870,7 @@ def api_start():
     thread = threading.Thread(target=_repair_worker, args=(cfg,), daemon=True)
     thread.start()
 
-    return jsonify({"status": "started", "app": app_name}), 202
+    return jsonify({"status": "started", "app": cfg["app"]}), 202
 
 
 @app.route("/api/repair/stop", methods=["POST"])
@@ -913,23 +955,16 @@ def api_backups():
 # Scheduler — automatic repair runs on a cron
 # ---------------------------------------------------------------------------
 def _run_scheduled(cfg: dict) -> dict:
-    """Synchronously runs a repair via the existing _repair_worker and returns
-    a serialisable summary (used by ScheduleRunner to stamp last_run)."""
+    """Synchronously run a scheduled repair via _repair_worker. Resolves
+    host/port/urlbase/apikey/container_name/db_path the same way the
+    /api/repair/start endpoint does (env + Docker discovery)."""
     if _job.running:
         return {"status": "skipped", "reason": "another job in progress"}
     sched_name = cfg.get("_schedule_name") or "schedule"
     log.info("Scheduled run firing: %s", sched_name)
-    # Server-side fill-in mirrors what api_start does for ad-hoc runs.
-    app_name = cfg["app"]
-    cfg.setdefault("host",    app.config.get(f"{app_name.upper()}_HOST")    or "localhost")
-    cfg.setdefault("port",    app.config.get(f"{app_name.upper()}_PORT")    or APP_DEFAULTS[app_name]["port"])
-    cfg.setdefault("apikey",  app.config.get(f"{app_name.upper()}_APIKEY")  or "")
-    cfg.setdefault("urlbase", app.config.get(f"{app_name.upper()}_URLBASE") or "")
-    cfg["api"] = APP_DEFAULTS[app_name]["api"]
-    if not cfg.get("container_name"):
-        cfg["container_name"] = app.config.get(f"{app_name.upper()}_CONTAINER", "")
-    if not cfg.get("apikey"):
-        return {"status": "error", "message": f"{app_name.upper()}_APIKEY not configured"}
+    cfg, err = _resolve_request_cfg(cfg)
+    if err:
+        return {"status": "error", "message": err}
     _repair_worker(cfg)
     return dict(_job.result or {"status": "unknown"})
 
@@ -946,6 +981,12 @@ if os.environ.get("STARR_DISABLE_SCHEDULER") == "1":
 else:
     _schedule_runner = ScheduleRunner(_schedule_store, _run_scheduled, lambda: _job.running)
     atexit.register(lambda: _schedule_runner._scheduler.shutdown(wait=False))
+    # Seed the Docker discovery cache once at startup so /api/apps returns
+    # auto-detected URLs without the user having to click "Detect" first.
+    try:
+        _refresh_discovery()
+    except Exception:
+        log.exception("Initial discovery scan failed (will retry on demand)")
 
 
 def _scheduler_required():

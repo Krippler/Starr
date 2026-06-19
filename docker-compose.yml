@@ -1,10 +1,15 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Starr DB Repair  —  docker-compose
+# Starr DB Repair — docker-compose
 #
 # Usage:
-#   cp .env.example .env        # fill in your API keys
+#   cp .env.example .env        # fill in your API keys + SECRET_KEY
 #   docker compose up -d
 #   open http://localhost:8877
+#
+# This config relies on Docker auto-discovery: a single /appdata mount + the
+# Docker socket let Starr find every *arr container, its URL, and its DB
+# without per-app configuration. Override an app's URL only if discovery
+# misses (e.g. you run multiple instances).
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -19,60 +24,39 @@ services:
       - "${WEB_PORT:-8877}:8877"
 
     environment:
-      # ── Runtime user (must own /data/<app>/<app>.db on the host) ───────────
+      # Runtime user — must own (or share a group with) your *arr appdata.
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
 
-      # ── Web server ─────────────────────────────────────────────────────────
+      # Web server
       PORT: 8877
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       SECRET_KEY: ${SECRET_KEY:-change-me}
 
-      # ── Backup settings ────────────────────────────────────────────────────
+      # Backups
       BACKUP_DIR: /backups
       MAX_BACKUP_AGE_DAYS: ${MAX_BACKUP_AGE_DAYS:-7}
 
-      # ── Sonarr (optional — can also be set in the web UI) ──────────────────
-      SONARR_HOST:      ${SONARR_HOST:-}
-      SONARR_PORT:      ${SONARR_PORT:-8989}
-      SONARR_APIKEY:    ${SONARR_APIKEY:-}
-      SONARR_URLBASE:   ${SONARR_URLBASE:-}
-      SONARR_CONTAINER: ${SONARR_CONTAINER:-sonarr}
+      # Per-app API keys (everything else is auto-discovered)
+      SONARR_APIKEY:   ${SONARR_APIKEY:-}
+      RADARR_APIKEY:   ${RADARR_APIKEY:-}
+      LIDARR_APIKEY:   ${LIDARR_APIKEY:-}
+      SPORTARR_APIKEY: ${SPORTARR_APIKEY:-}
 
-      # ── Radarr ─────────────────────────────────────────────────────────────
-      RADARR_HOST:      ${RADARR_HOST:-}
-      RADARR_PORT:      ${RADARR_PORT:-7878}
-      RADARR_APIKEY:    ${RADARR_APIKEY:-}
-      RADARR_URLBASE:   ${RADARR_URLBASE:-}
-      RADARR_CONTAINER: ${RADARR_CONTAINER:-radarr}
-
-      # ── Lidarr ─────────────────────────────────────────────────────────────
-      LIDARR_HOST:      ${LIDARR_HOST:-}
-      LIDARR_PORT:      ${LIDARR_PORT:-8686}
-      LIDARR_APIKEY:    ${LIDARR_APIKEY:-}
-      LIDARR_URLBASE:   ${LIDARR_URLBASE:-}
-      LIDARR_CONTAINER: ${LIDARR_CONTAINER:-lidarr}
-
-      # ── Sportarr ───────────────────────────────────────────────────────────
-      SPORTARR_HOST:      ${SPORTARR_HOST:-}
-      SPORTARR_PORT:      ${SPORTARR_PORT:-1867}
-      SPORTARR_APIKEY:    ${SPORTARR_APIKEY:-}
-      SPORTARR_URLBASE:   ${SPORTARR_URLBASE:-}
-      SPORTARR_CONTAINER: ${SPORTARR_CONTAINER:-sportarr}
+      # Optional URL overrides (format: http://host:port[/urlbase])
+      SONARR_URL:   ${SONARR_URL:-}
+      RADARR_URL:   ${RADARR_URL:-}
+      LIDARR_URL:   ${LIDARR_URL:-}
+      SPORTARR_URL: ${SPORTARR_URL:-}
 
     volumes:
-      # Mount your Starr app config dirs so the container can read the .db files
-      # Adjust paths to match your setup:
-      # rw is required: VACUUM / REINDEX / FK repair write to the source DB
-      - ${SONARR_CONFIG:-/opt/appdata/sonarr}:/data/sonarr:rw
-      - ${RADARR_CONFIG:-/opt/appdata/radarr}:/data/radarr:rw
-      - ${LIDARR_CONFIG:-/opt/appdata/lidarr}:/data/lidarr:rw
-      - ${SPORTARR_CONFIG:-/opt/appdata/sportarr}:/data/sportarr:rw
+      # The host appdata root — Starr finds each *arr's /config by inspecting
+      # its container and walks the relative path inside /appdata.
+      - ${APPDATA_ROOT:-/mnt/user/appdata}:/appdata:rw
       # Backup output
       - ${BACKUP_PATH:-./backups}:/backups
-      # Optional: Docker socket so Starr can docker-stop/start the *arr
-      # containers itself (more reliable than the app shutdown API on hosts
-      # with a restart policy). Comment out to disable container-managed mode.
+      # Docker socket — required for auto-discovery and container-managed
+      # start/stop. Leave commented to fall back to the *arr shutdown API.
       - /var/run/docker.sock:/var/run/docker.sock
 
     healthcheck:

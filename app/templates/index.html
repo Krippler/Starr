@@ -365,28 +365,22 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     </div>
     <div class="panel-body">
       <div class="form-grid">
-        <div class="field"><label>Host</label><input id="host" value="localhost" placeholder="localhost or 192.168.1.x"></div>
-        <div class="field"><label>Port</label><input id="port" value="8989" type="number"></div>
-        <div class="field"><label>API Key</label><input id="apikey" type="password" placeholder="Settings › General › API Key"></div>
-        <div class="field">
-          <label>URL Base (optional)</label>
-          <!-- placeholder updated dynamically by updatePlaceholders() -->
-          <input id="urlbase" placeholder="/sonarr">
+        <div class="field" style="grid-column:1/-1">
+          <label>URL <span style="color:var(--muted);font-size:9px;margin-left:6px">http://host:port[/urlbase] — leave blank for auto-discovery</span></label>
+          <input id="appUrl" placeholder="http://sonarr:8989">
+        </div>
+        <div class="field" style="grid-column:1/-1">
+          <label>API Key</label>
+          <input id="apikey" type="password" placeholder="Settings › General › API Key">
         </div>
       </div>
-      <div class="form-grid" style="margin-bottom:14px">
-        <div class="field">
-          <label>Container Name (optional — Docker socket)</label>
-          <!-- placeholder updated dynamically by updatePlaceholders() -->
-          <input id="containerName" placeholder="sonarr" oninput="syncShutdownWarning()">
-        </div>
-        <div class="field">
-          <label>Database Path (optional — auto-detected)</label>
-          <!-- placeholder updated dynamically by updatePlaceholders() -->
-          <input id="dbpath" placeholder="/config/sonarr.db  or leave blank to auto-detect">
-        </div>
-      </div>
+      <div id="discoveryHint" style="display:none;font-size:10px;line-height:1.5;color:var(--ok);background:rgba(0,200,127,.08);border:1px solid rgba(0,200,127,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
+      <div id="discoveryWarn" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
       <div class="action-row">
+        <button class="btn btn-ghost btn-sm" onclick="detectContainers()" id="detectBtn">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Detect *arr containers
+        </button>
         <button class="btn btn-ghost btn-sm" onclick="testConnection()" id="testBtn">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Test Connection
@@ -661,11 +655,14 @@ function handle401() {
 
 // ── Dynamic placeholder + label updates ───────────────────────────────────────
 // Called on boot and every time the user switches app tab.
+// Cache of /api/apps results keyed by app, so syncShutdownWarning() and
+// submitRepair() can read the discovered container_name + db_path without
+// having to expose them as form fields.
+let _appsByName = {};
+
 function updatePlaceholders(app) {
   const cfg = APPS[app];
-  document.getElementById('urlbase').placeholder       = cfg.urlbasePlaceholder;
-  document.getElementById('dbpath').placeholder        = cfg.dbPlaceholder + '  or leave blank to auto-detect';
-  document.getElementById('containerName').placeholder = app;     // e.g. 'sonarr'
+  document.getElementById('appUrl').placeholder = `http://${app}:${cfg.port}`;
   syncShutdownWarning();
 }
 
@@ -676,7 +673,7 @@ function syncShutdownWarning() {
   const cfg = APPS[currentApp];
   const pretty = cfg.name.charAt(0) + cfg.name.slice(1).toLowerCase();
   const api = cfg.api || 'v3';
-  const container = (document.getElementById('containerName')?.value || '').trim();
+  const container = (_appsByName[currentApp]?.container_name || '').trim();
   const title = document.getElementById('warnTitle');
   const body  = document.getElementById('warnBody');
 
@@ -742,21 +739,20 @@ function boot() {
   });
 
   // Show the Docker/Unraid guidance only while "Skip Shutdown" is checked,
-  // and tailor the message based on whether a container name is set.
+  // and tailor the message based on whether a container was auto-discovered.
   const skip = document.getElementById('skipShutdownCheck');
   const hint = document.getElementById('skipShutdownHint');
   window.syncHint = () => {
-    const container = (document.getElementById('containerName')?.value || '').trim();
+    const container = (_appsByName[currentApp]?.container_name || '').trim();
     if (!skip.checked) { hint.style.display = 'none'; return; }
     hint.style.display = 'block';
     if (container) {
-      hint.innerHTML = `<strong>You don't need this checked.</strong> A container name is set (<code>${escHtml(container)}</code>), so Starr will <code>docker stop</code> the container directly — no restart-policy race to work around. Uncheck this unless you've already stopped the container yourself.`;
+      hint.innerHTML = `<strong>You don't need this checked.</strong> Starr discovered the container (<code>${escHtml(container)}</code>) and will <code>docker stop</code> it directly — no restart-policy race to work around. Uncheck this unless you've already stopped the container yourself.`;
     } else {
       hint.innerHTML = `<strong>Docker / Unraid:</strong> the app's restart policy will bring it back online seconds after the shutdown API stops it. For a safe repair, <strong>stop the app's container first</strong> (e.g. <code>docker stop ${currentApp}</code>), then keep this checked so Starr repairs the idle database directly. Start the container again when the repair finishes.`;
     }
   };
   skip.addEventListener('change', syncHint);
-  document.getElementById('containerName').addEventListener('input', syncHint);
   syncHint();
 }
 
@@ -843,25 +839,38 @@ function onWebKeyInput() {
 }
 
 // ── Env config pre-fill ───────────────────────────────────────────────────────
-// Pull whatever the user set via env vars (host / port / apikey / urlbase) into
-// the form for the given app. Called on initial load and on every app switch.
+// Pull the auto-discovered + env-configured per-app values into the form.
+// The user only has to type the apikey (URL is auto-discovered via Docker).
+// Called on initial load and on every app switch.
 function applyEnvConfig(apps, app) {
-  const a = apps.find(x => x.app === app);
-  if (!a) return;
-  if (a.host)    document.getElementById('host').value    = a.host;
-  if (a.port)    document.getElementById('port').value    = a.port;
-  if (a.urlbase) document.getElementById('urlbase').value = a.urlbase;
-  if (a.container_name) document.getElementById('containerName').value = a.container_name;
+  _appsByName = Object.fromEntries((apps||[]).map(a => [a.app, a]));
+  const a = _appsByName[app];
+  if (!a) { renderDiscoveryHints({ url:'', discovered:false, missing:true }); return; }
+  if (a.url)    document.getElementById('appUrl').value = a.url;
+  if (a.apikey) document.getElementById('apikey').value = a.apikey;
+  renderDiscoveryHints(a);
   syncShutdownWarning();
-  if (a.apikey)  document.getElementById('apikey').value  = a.apikey;
   const loaded = [];
-  if (a.host)           loaded.push('host');
-  if (a.port)           loaded.push('port');
-  if (a.urlbase)        loaded.push('urlbase');
+  if (a.url)            loaded.push('url');
   if (a.container_name) loaded.push('container');
+  if (a.db_path)        loaded.push('db_path');
   if (a.apikey)         loaded.push('apikey');
   if (loaded.length) {
-    logLine('SYS', `${app.toUpperCase()} config loaded from environment: ${loaded.join(', ')}`, 'sys');
+    const src = a.discovered ? 'Docker discovery' : 'environment';
+    logLine('SYS', `${app.toUpperCase()} config loaded from ${src}: ${loaded.join(', ')}`, 'sys');
+  }
+}
+
+function renderDiscoveryHints(a) {
+  const hint = document.getElementById('discoveryHint');
+  const warn = document.getElementById('discoveryWarn');
+  hint.style.display = warn.style.display = 'none';
+  if (a?.discovered) {
+    hint.innerHTML = `🔍 Auto-discovered <strong>${escHtml(a.container_name || currentApp)}</strong> via Docker — URL <code>${escHtml(a.url || '(none)')}</code>, DB <code>${escHtml(a.db_path || '(none)')}</code>.`;
+    hint.style.display = 'block';
+  } else if (!a?.url) {
+    warn.innerHTML = `Docker discovery didn't find a <strong>${currentApp}</strong> container. Enter the URL manually, click "Detect *arr containers" to rescan, or set <code>${currentApp.toUpperCase()}_URL</code> in the Starr container env.`;
+    warn.style.display = 'block';
   }
 }
 
@@ -880,19 +889,15 @@ function switchApp(app) {
   document.getElementById('logoSvg').innerHTML    = cfg.icon;
   document.getElementById('termTitle').textContent = cfg.name + ' REPAIR LOG';
 
-  // Port
-  document.getElementById('port').value = cfg.port;
-
   // Active tab highlight
   document.querySelectorAll('.app-tab').forEach(t => t.classList.toggle('active', t.dataset.app === app));
 
   // All dynamic placeholders and labels
   updatePlaceholders(app);
 
-  // Clear the user-entered optional fields so previous app's values don't carry over
-  document.getElementById('urlbase').value       = '';
-  document.getElementById('dbpath').value        = '';
-  document.getElementById('containerName').value = '';
+  // Clear app-specific fields so the previous app's values don't carry over
+  document.getElementById('appUrl').value  = '';
+  document.getElementById('apikey').value  = '';
 
   // Reset UI state
   resetPhases();
@@ -901,7 +906,7 @@ function switchApp(app) {
   selectedOps.clear();
   selectSafe();
   renderOps();
-  logLine('SYS', `Switched to ${cfg.name}. Port set to ${cfg.port}.`, 'sys');
+  logLine('SYS', `Switched to ${cfg.name}.`, 'sys');
 
   // Pre-fill from env if available
   loadEnvConfig({ logErrors: false });
@@ -926,19 +931,43 @@ function selectSafe() { APPS[currentApp].ops.filter(o=>o.safe).forEach(o=>select
 function selectAll()  { APPS[currentApp].ops.forEach(o=>selectedOps.add(o.id)); renderOps(); }
 function clearSel()   { selectedOps.clear(); renderOps(); }
 
+// ── Docker discovery ──────────────────────────────────────────────────────────
+async function detectContainers() {
+  const btn = document.getElementById('detectBtn');
+  btn.disabled = true; const oldHTML = btn.innerHTML; btn.textContent = 'Scanning…';
+  try {
+    const res = await fetch('/api/discover', { method:'POST', headers: authHeaders() });
+    if (res.status === 401) { handle401(); return; }
+    const d = await res.json();
+    if (!d.docker_available) {
+      logLine('WARN', 'Docker daemon not reachable — mount /var/run/docker.sock and try again.', 'warn');
+    } else if (!d.apps?.length) {
+      logLine('WARN', 'No *arr containers detected on this Docker daemon.', 'warn');
+    } else {
+      logLine('OK', `Discovered: ${d.apps.map(a => a.container_name).join(', ')}`, 'ok');
+    }
+    (d.warnings || []).forEach(w => logLine('WARN', w, 'warn'));
+    // Reload /api/apps so the cache and pre-fill pick up the fresh discovery
+    await loadEnvConfig({ logErrors: false });
+  } catch(e) {
+    logLine('ERR', 'Detect failed: ' + e.message, 'err');
+  } finally {
+    btn.disabled = false; btn.innerHTML = oldHTML;
+  }
+}
+
 // ── Connection test ───────────────────────────────────────────────────────────
 async function testConnection() {
   const btn = document.getElementById('testBtn');
-  const host    = document.getElementById('host').value.trim();
-  const port    = document.getElementById('port').value.trim();
+  const url     = (document.getElementById('appUrl').value.trim()) || (_appsByName[currentApp]?.url || '');
   const apikey  = document.getElementById('apikey').value.trim();
-  const urlbase = document.getElementById('urlbase').value.trim();
+  if (!url)    { logLine('ERR','No URL — set one or click "Detect *arr containers".','err'); return; }
   if (!apikey) { logLine('ERR','API key required.','err'); return; }
   btn.disabled = true; btn.textContent = 'Testing…';
   const api = APPS[currentApp].api || 'v3';
-  logLine('INFO', `Testing http://${host}:${port}${urlbase}/api/${api}/system/status`, 'info');
+  logLine('INFO', `Testing ${url}/api/${api}/system/status`, 'info');
   try {
-    const r = await fetch(`http://${host}:${port}${urlbase}/api/${api}/system/status`,
+    const r = await fetch(`${url}/api/${api}/system/status`,
       { headers: { 'X-Api-Key': apikey } });
     if (r.ok) {
       const d = await r.json();
@@ -966,12 +995,8 @@ async function startRepair() {
   if (!apikey) { logLine('ERR','API key is required.','err'); return; }
   const payload = {
     app: currentApp,
-    host: document.getElementById('host').value.trim(),
-    port: parseInt(document.getElementById('port').value),
+    url: document.getElementById('appUrl').value.trim(),
     apikey,
-    urlbase: document.getElementById('urlbase').value.trim(),
-    db_path: document.getElementById('dbpath').value.trim(),
-    container_name: document.getElementById('containerName').value.trim(),
     ops: [...selectedOps],
     dry_run: document.getElementById('dryRunCheck').checked,
     skip_shutdown: document.getElementById('skipShutdownCheck').checked,

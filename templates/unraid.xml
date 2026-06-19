@@ -11,12 +11,15 @@
   <ReadmeURL>https://github.com/Krippler/Starr/blob/main/README.md</ReadmeURL>
   <Overview>
     Web UI for diagnosing and repairing Sonarr, Radarr, Lidarr, and Sportarr SQLite databases.
-    Safely shuts down the target app, creates a timestamped backup, runs SQLite
+    Safely stops the target *arr container, creates a timestamped backup, runs SQLite
     PRAGMA repairs (integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX,
-    ANALYZE) on the idle database, then automatically waits for the app to come
-    back online. All repair operations are streamed live to the browser terminal.
-    Supports dry-run mode. Backups are auto-pruned after a configurable number of days.
-    Set SECRET_KEY to a strong random value to protect the dashboard on your network.
+    ANALYZE) on the idle database, then starts the container back up. All repair
+    operations stream live to the browser terminal. Supports a built-in scheduler
+    with skip-if-clean semantics, dry-run mode, and per-app API key auth.
+
+    With the Docker socket mounted and a single /appdata mount pointed at your
+    host appdata root, Starr auto-discovers each *arr container — its URL,
+    container name, and database path — so you only need to enter the API keys.
   </Overview>
 
   <!-- ── Appearance / runtime ───────────────────────────────────────────── -->
@@ -34,34 +37,21 @@
           Type="Port" Display="always" Required="true" Mask="false">8877</Config>
 
   <!-- ── Volumes ────────────────────────────────────────────────────────── -->
-  <Config Name="Sonarr config" Target="/data/sonarr" Default="/mnt/user/appdata/sonarr" Mode="rw"
-          Description="Sonarr config directory (must contain sonarr.db). Leave blank if not using Sonarr. Read-write is required so repairs can run."
-          Type="Path" Display="always" Required="false" Mask="false">/mnt/user/appdata/sonarr</Config>
-
-  <Config Name="Radarr config" Target="/data/radarr" Default="/mnt/user/appdata/radarr" Mode="rw"
-          Description="Radarr config directory (must contain radarr.db). Leave blank if not using Radarr. Read-write is required so repairs can run."
-          Type="Path" Display="always" Required="false" Mask="false">/mnt/user/appdata/radarr</Config>
-
-  <Config Name="Lidarr config" Target="/data/lidarr" Default="/mnt/user/appdata/lidarr" Mode="rw"
-          Description="Lidarr config directory (must contain lidarr.db). Leave blank if not using Lidarr. Read-write is required so repairs can run."
-          Type="Path" Display="always" Required="false" Mask="false">/mnt/user/appdata/lidarr</Config>
-
-  <Config Name="Sportarr config" Target="/data/sportarr" Default="/mnt/user/appdata/sportarr" Mode="rw"
-          Description="Sportarr config directory (must contain sportarr.db). Leave blank if not using Sportarr. Read-write is required so repairs can run."
-          Type="Path" Display="always" Required="false" Mask="false">/mnt/user/appdata/sportarr</Config>
+  <Config Name="Appdata root" Target="/appdata" Default="/mnt/user/appdata" Mode="rw"
+          Description="Host appdata root. Starr uses Docker introspection to find each *arr's /config inside this mount, so a single path mount replaces the four per-app mounts the old template had. Read-write because VACUUM/REINDEX/FK repair write to the source DB."
+          Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata</Config>
 
   <Config Name="Backups" Target="/backups" Default="/mnt/user/appdata/starr/backups" Mode="rw"
           Description="Where timestamped database backups are stored. Backups are auto-pruned based on MAX_BACKUP_AGE_DAYS."
           Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/starr/backups</Config>
 
-  <!-- ── Docker socket (optional: enables container-managed shutdown) ────── -->
   <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw"
-          Description="Mount the host Docker socket so Starr can stop/start the *arr container itself (more reliable than the app's shutdown API on hosts with a container restart policy). Requires you to set the corresponding *_CONTAINER variable for each app. Leave blank to disable."
-          Type="Path" Display="always" Required="false" Mask="false">/var/run/docker.sock</Config>
+          Description="Mount the host Docker socket so Starr can auto-discover *arr containers and stop/start them around repairs (more reliable than the app's shutdown API on hosts with a container restart policy). Leave blank to disable Docker-managed operation."
+          Type="Path" Display="always" Required="true" Mask="false">/var/run/docker.sock</Config>
 
   <!-- ── User / group (Unraid: 99:100 nobody:users) ─────────────────────── -->
   <Config Name="PUID" Target="PUID" Default="99" Mode=""
-          Description="UID the container runs as. Must match (or be in the same group as) the UID that owns your *arr config dirs (Sonarr, Radarr, etc.) so VACUUM/REINDEX can write the source DB. Unraid default: 99 (nobody)."
+          Description="UID the container runs as. Must own — or share a group with — the *arr config dirs under your appdata root so VACUUM/REINDEX can write the source DB. Unraid default: 99 (nobody)."
           Type="Variable" Display="always" Required="true" Mask="false">99</Config>
   <Config Name="PGID" Target="PGID" Default="100" Mode=""
           Description="GID the container runs as. Unraid default: 100 (users)."
@@ -69,90 +59,50 @@
 
   <!-- ── Security ───────────────────────────────────────────────────────── -->
   <Config Name="SECRET_KEY" Target="SECRET_KEY" Default="" Mode=""
-          Description="Web UI access key — set this to a strong random value to protect the dashboard. Anyone who can reach the port can use the UI without this set."
+          Description="Web UI access key. Anyone who can reach the port can use the UI without this set — pick a strong random value."
           Type="Variable" Display="always" Required="true" Mask="true"/>
 
-  <!-- ── Web server ─────────────────────────────────────────────────────── -->
-  <Config Name="PORT" Target="PORT" Default="8877" Mode=""
-          Description="Web UI listen port inside the container. Must match the WebUI Port mapping above."
-          Type="Variable" Display="advanced" Required="true" Mask="false">8877</Config>
-
-  <!-- ── Logging ────────────────────────────────────────────────────────── -->
+  <!-- ── Logging / backup retention ─────────────────────────────────────── -->
   <Config Name="LOG_LEVEL" Target="LOG_LEVEL" Default="INFO" Mode=""
           Description="Log verbosity: DEBUG, INFO, WARNING, ERROR."
           Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
 
-  <!-- ── Backup ─────────────────────────────────────────────────────────── -->
   <Config Name="MAX_BACKUP_AGE_DAYS" Target="MAX_BACKUP_AGE_DAYS" Default="7" Mode=""
           Description="Number of days to keep backups before auto-pruning. Set to 0 to disable pruning."
           Type="Variable" Display="always" Required="false" Mask="false">7</Config>
 
-  <!-- ── Sonarr ─────────────────────────────────────────────────────────── -->
-  <Config Name="SONARR_HOST" Target="SONARR_HOST" Default="" Mode=""
-          Description="Sonarr hostname or IP (e.g. sonarr or 192.168.1.10). Leave blank to configure in the web UI."
-          Type="Variable" Display="always" Required="false" Mask="false"/>
-  <Config Name="SONARR_PORT" Target="SONARR_PORT" Default="8989" Mode=""
-          Description="Sonarr HTTP port."
-          Type="Variable" Display="always" Required="false" Mask="false">8989</Config>
+  <!-- ── Per-app API keys ───────────────────────────────────────────────── -->
+  <!-- The only per-app value Starr needs is the API key. URL, container name,
+       and DB path are auto-discovered via the Docker socket. Leave an API key
+       blank to disable repairs for that app. -->
   <Config Name="SONARR_APIKEY" Target="SONARR_APIKEY" Default="" Mode=""
-          Description="Sonarr API key — found at Settings › General › API Key."
+          Description="Sonarr API key (Settings › General › API Key). Leave blank to disable."
           Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="SONARR_URLBASE" Target="SONARR_URLBASE" Default="" Mode=""
-          Description="Sonarr URL base if you use a reverse proxy subpath, e.g. /sonarr. Leave blank if none."
-          Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="SONARR_CONTAINER" Target="SONARR_CONTAINER" Default="sonarr" Mode=""
-          Description="Sonarr container name. When set + the Docker Socket above is mounted, Starr stops/starts the container itself instead of using Sonarr's API shutdown (more reliable with a container restart policy)."
-          Type="Variable" Display="always" Required="false" Mask="false">sonarr</Config>
-
-  <!-- ── Radarr ─────────────────────────────────────────────────────────── -->
-  <Config Name="RADARR_HOST" Target="RADARR_HOST" Default="" Mode=""
-          Description="Radarr hostname or IP. Leave blank to configure in the web UI."
-          Type="Variable" Display="always" Required="false" Mask="false"/>
-  <Config Name="RADARR_PORT" Target="RADARR_PORT" Default="7878" Mode=""
-          Description="Radarr HTTP port."
-          Type="Variable" Display="always" Required="false" Mask="false">7878</Config>
   <Config Name="RADARR_APIKEY" Target="RADARR_APIKEY" Default="" Mode=""
-          Description="Radarr API key — found at Settings › General › API Key."
+          Description="Radarr API key. Leave blank to disable."
           Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="RADARR_URLBASE" Target="RADARR_URLBASE" Default="" Mode=""
-          Description="Radarr URL base if using a reverse proxy subpath, e.g. /radarr. Leave blank if none."
-          Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="RADARR_CONTAINER" Target="RADARR_CONTAINER" Default="radarr" Mode=""
-          Description="Radarr container name. When set + the Docker Socket above is mounted, Starr stops/starts the container itself."
-          Type="Variable" Display="always" Required="false" Mask="false">radarr</Config>
-
-  <!-- ── Lidarr ─────────────────────────────────────────────────────────── -->
-  <Config Name="LIDARR_HOST" Target="LIDARR_HOST" Default="" Mode=""
-          Description="Lidarr hostname or IP. Leave blank to configure in the web UI."
-          Type="Variable" Display="always" Required="false" Mask="false"/>
-  <Config Name="LIDARR_PORT" Target="LIDARR_PORT" Default="8686" Mode=""
-          Description="Lidarr HTTP port."
-          Type="Variable" Display="always" Required="false" Mask="false">8686</Config>
   <Config Name="LIDARR_APIKEY" Target="LIDARR_APIKEY" Default="" Mode=""
-          Description="Lidarr API key — found at Settings › General › API Key."
+          Description="Lidarr API key. Leave blank to disable."
           Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="LIDARR_URLBASE" Target="LIDARR_URLBASE" Default="" Mode=""
-          Description="Lidarr URL base if using a reverse proxy subpath, e.g. /lidarr. Leave blank if none."
-          Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="LIDARR_CONTAINER" Target="LIDARR_CONTAINER" Default="lidarr" Mode=""
-          Description="Lidarr container name. When set + the Docker Socket above is mounted, Starr stops/starts the container itself."
-          Type="Variable" Display="always" Required="false" Mask="false">lidarr</Config>
-
-  <!-- ── Sportarr ───────────────────────────────────────────────────────── -->
-  <Config Name="SPORTARR_HOST" Target="SPORTARR_HOST" Default="" Mode=""
-          Description="Sportarr hostname or IP. Leave blank to configure in the web UI."
-          Type="Variable" Display="always" Required="false" Mask="false"/>
-  <Config Name="SPORTARR_PORT" Target="SPORTARR_PORT" Default="1867" Mode=""
-          Description="Sportarr HTTP port (default: 1867)."
-          Type="Variable" Display="always" Required="false" Mask="false">1867</Config>
   <Config Name="SPORTARR_APIKEY" Target="SPORTARR_APIKEY" Default="" Mode=""
-          Description="Sportarr API key — found at Settings › General › API Key."
+          Description="Sportarr API key. Leave blank to disable."
           Type="Variable" Display="always" Required="false" Mask="true"/>
-  <Config Name="SPORTARR_URLBASE" Target="SPORTARR_URLBASE" Default="" Mode=""
-          Description="Sportarr URL base if using a reverse proxy subpath, e.g. /sportarr. Leave blank if none."
+
+  <!-- ── Optional URL overrides (rarely needed) ─────────────────────────── -->
+  <!-- These let you override the URL auto-discovery for any app — e.g. you
+       have multiple Sonarr instances or you're proxying through a hostname.
+       Format: http://host:port[/urlbase]. Leave blank to let discovery do it. -->
+  <Config Name="SONARR_URL" Target="SONARR_URL" Default="" Mode=""
+          Description="Optional. Override the discovered Sonarr URL. Format: http://host:port[/urlbase]."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
-  <Config Name="SPORTARR_CONTAINER" Target="SPORTARR_CONTAINER" Default="sportarr" Mode=""
-          Description="Sportarr container name. When set + the Docker Socket above is mounted, Starr stops/starts the container itself."
-          Type="Variable" Display="always" Required="false" Mask="false">sportarr</Config>
+  <Config Name="RADARR_URL" Target="RADARR_URL" Default="" Mode=""
+          Description="Optional. Override the discovered Radarr URL."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="LIDARR_URL" Target="LIDARR_URL" Default="" Mode=""
+          Description="Optional. Override the discovered Lidarr URL."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="SPORTARR_URL" Target="SPORTARR_URL" Default="" Mode=""
+          Description="Optional. Override the discovered Sportarr URL."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
 </Container>

@@ -37,7 +37,7 @@ def _isolate_job():
 def client(tmp_path):
     srv.app.config["TESTING"]    = True
     srv.app.config["BACKUP_DIR"] = tmp_path / "backups"
-    srv.app.config["DB_DIR"]     = tmp_path / "data"
+    srv.app.config["APPDATA_DIR"] = tmp_path / "data"
     (tmp_path / "backups").mkdir()
     (tmp_path / "data").mkdir()
     with srv.app.test_client() as c:
@@ -86,16 +86,29 @@ def test_start_sportarr_recognized(client):
     """Sportarr should be recognized as a valid app (will fail at connection, not validation)."""
     r = client.post("/api/repair/start",
                     data=json.dumps({"app": "sportarr", "apikey": "x",
-                                     "host": "127.0.0.1", "port": 1867}),
+                                     "url": "http://127.0.0.1:1867"}),
                     content_type="application/json")
     # 202 = job started (will fail at preflight since no real Sportarr running)
     # 409 = already running from a previous test leaking state — both are acceptable
     assert r.status_code in (202, 409)
 
 
-def test_start_missing_apikey(client):
+def test_start_missing_url(client):
+    """Without a URL (and no discovery) the resolver should reject with a clear
+    error before checking apikey."""
     r = client.post("/api/repair/start",
-                    data=json.dumps({"app": "sonarr"}),
+                    data=json.dumps({"app": "sonarr", "apikey": "x"}),
+                    content_type="application/json")
+    assert r.status_code == 400
+    assert b"URL" in r.data or b"url" in r.data
+
+
+def test_start_missing_apikey(client):
+    """A URL with no apikey (no env apikey either) is rejected with an apikey
+    error."""
+    r = client.post("/api/repair/start",
+                    data=json.dumps({"app": "sonarr",
+                                     "url": "http://127.0.0.1:8989"}),
                     content_type="application/json")
     assert r.status_code == 400
     assert b"apikey" in r.data
@@ -103,7 +116,8 @@ def test_start_missing_apikey(client):
 
 def test_start_invalid_ops(client):
     r = client.post("/api/repair/start",
-                    data=json.dumps({"app": "sonarr", "apikey": "x", "ops": ["bad_op"]}),
+                    data=json.dumps({"app": "sonarr", "apikey": "x", "ops": ["bad_op"],
+                                     "url": "http://127.0.0.1:8989"}),
                     content_type="application/json")
     assert r.status_code == 400
     assert b"Unknown ops" in r.data
@@ -150,29 +164,25 @@ def test_api_apps_empty(client):
     assert isinstance(json.loads(r.data), list)
 
 
-def test_api_apps_returns_full_config(client):
-    """All env-configured fields, including the apikey, round-trip so the
-    dashboard form can pre-fill them. The endpoint is gated by SECRET_KEY."""
-    srv.app.config["SONARR_HOST"]    = "sonarr.local"
-    srv.app.config["SONARR_PORT"]    = 8989
-    srv.app.config["SONARR_APIKEY"]  = "supersecret"
-    srv.app.config["SONARR_URLBASE"] = "/sonarr"
+def test_api_apps_returns_url_and_apikey(client):
+    """Env-configured URL + apikey round-trip through /api/apps for the UI to
+    pre-fill. The endpoint is gated by SECRET_KEY."""
+    srv.app.config["SONARR_URL"]    = "http://sonarr.local:8989/sonarr"
+    srv.app.config["SONARR_APIKEY"] = "supersecret"
     try:
         body = json.loads(client.get("/api/apps").data)
         sonarr = next(a for a in body if a["app"] == "sonarr")
-        assert sonarr["host"]       == "sonarr.local"
-        assert sonarr["port"]       == 8989
-        assert sonarr["urlbase"]    == "/sonarr"
-        assert sonarr["configured"] is True
+        assert sonarr["url"]        == "http://sonarr.local:8989/sonarr"
         assert sonarr["apikey"]     == "supersecret"
+        assert sonarr["configured"] is True
     finally:
-        srv.app.config["SONARR_HOST"]    = ""
-        srv.app.config["SONARR_APIKEY"]  = ""
-        srv.app.config["SONARR_URLBASE"] = ""
+        srv.app.config["SONARR_URL"]    = ""
+        srv.app.config["SONARR_APIKEY"] = ""
 
 
 def test_api_apps_includes_app_when_only_apikey_set(client):
-    """An app with apikey but no host should still appear (previously it was filtered out)."""
+    """An app with apikey but no URL should still appear so the UI shows it
+    (the discovery hint will tell the user to add a URL)."""
     srv.app.config["RADARR_APIKEY"] = "key-only"
     try:
         body = json.loads(client.get("/api/apps").data)
@@ -441,3 +451,30 @@ def test_probe_db_clean_skips_repair(monkeypatch, tmp_path):
 
     assert called == [], f"clean probe must short-circuit; got {called}"
     assert srv._job.result["status"] == "clean"
+
+
+# ── URL parser ────────────────────────────────────────────────────────────────
+def test_split_url_handles_common_shapes():
+    """_split_url must parse host:port, http://host:port/, and url-base."""
+    assert srv._split_url("http://172.17.0.12:8989") == ("172.17.0.12", 8989, "")
+    assert srv._split_url("http://sonarr:8989/sonarr") == ("sonarr", 8989, "/sonarr")
+    # Bare host:port → treated as http://
+    assert srv._split_url("sonarr:8989") == ("sonarr", 8989, "")
+    # Default port fallback when missing
+    assert srv._split_url("http://sonarr", default_port=8989) == ("sonarr", 8989, "")
+    # Empty
+    h, p, b = srv._split_url("", default_port=1867)
+    assert h == "" and p == 1867 and b == ""
+
+
+def test_api_discover_endpoint_returns_payload(client, monkeypatch):
+    """The /api/discover route returns the discovery cache structure."""
+    monkeypatch.setattr(srv._discovery, "discover", lambda: {
+        "docker_available": False, "appdata": {"host_root": None, "container_root": "/appdata"},
+        "apps": [], "warnings": ["test"]
+    })
+    r = client.post("/api/discover")
+    assert r.status_code == 200
+    body = json.loads(r.data)
+    assert body["docker_available"] is False
+    assert body["warnings"] == ["test"]
