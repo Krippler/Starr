@@ -866,7 +866,10 @@ function renderDiscoveryHints(a) {
   const warn = document.getElementById('discoveryWarn');
   hint.style.display = warn.style.display = 'none';
   if (a?.discovered) {
-    hint.innerHTML = `🔍 Auto-discovered <strong>${escHtml(a.container_name || currentApp)}</strong> via Docker — URL <code>${escHtml(a.url || '(none)')}</code>, DB <code>${escHtml(a.db_path || '(none)')}</code>.`;
+    const internalNote = (a.internal_url && a.internal_url !== a.url)
+      ? ` Starr will reach it internally via <code>${escHtml(a.internal_url)}</code>.`
+      : '';
+    hint.innerHTML = `🔍 Auto-discovered <strong>${escHtml(a.container_name || currentApp)}</strong> via Docker — URL <code>${escHtml(a.url || '(none)')}</code>, DB <code>${escHtml(a.db_path || '(none)')}</code>.${internalNote}`;
     hint.style.display = 'block';
   } else if (!a?.url) {
     warn.innerHTML = `Docker discovery didn't find a <strong>${currentApp}</strong> container. Enter the URL manually, click "Detect *arr containers" to rescan, or set <code>${currentApp.toUpperCase()}_URL</code> in the Starr container env.`;
@@ -1014,20 +1017,34 @@ async function startRepair() {
 }
 
 async function stopRepair() {
-  const res = await fetch('/api/repair/stop',{method:'POST',headers:authHeaders()});
-  if (res.status===401) { handle401(); return; }
-  // 409 = "No job running" — the server has already finished. Reset local
-  // state so the UI exits 'running' mode instead of looping on Stop forever.
-  if (res.status===409) {
-    logLine('WARN','No active job to stop — UI was out of sync; resetting.','warn');
-    finishJob();
-    return;
+  const btn = document.getElementById('stopBtn');
+  // Disable immediately so the user can't click again and end up out of sync
+  // when the worker finishes its current step a moment later.
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.html = btn.dataset.html || btn.innerHTML;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg> Stopping…';
   }
-  if (!res.ok) {
-    logLine('ERR',`Stop failed: HTTP ${res.status}`,'err');
-    return;
+  try {
+    const res = await fetch('/api/repair/stop',{method:'POST',headers:authHeaders()});
+    if (res.status===401) { handle401(); return; }
+    // 409 = "No job running" — the server has already finished. Reset local
+    // state so the UI exits 'running' mode instead of looping on Stop forever.
+    if (res.status===409) {
+      logLine('WARN','No active job to stop — UI was out of sync; resetting.','warn');
+      finishJob();
+      return;
+    }
+    if (!res.ok) {
+      logLine('ERR',`Stop failed: HTTP ${res.status}`,'err');
+      if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.html || btn.innerHTML; }
+      return;
+    }
+    logLine('WARN','Stop requested — aborting after current step…','warn');
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.innerHTML = btn.dataset.html || btn.innerHTML; }
+    throw e;
   }
-  logLine('WARN','Stop requested — aborting after current step…','warn');
 }
 
 // ── SSE ───────────────────────────────────────────────────────────────────────
@@ -1067,6 +1084,27 @@ function enterRunningMode({ silent = false } = {}) {
   if (!silent) logLine('SYS','Live job detected — streaming into the repair log.','sys');
 }
 
+// Visible progress per repair phase so the bar advances even during the
+// pre-ops stages (preflight/shutdown/backup) on a large DB. Once Step 4
+// starts, the per-op activatePill() takes over from this fixed table.
+const PHASE_PROGRESS = {
+  1: { pct:  5, label: app => `Connecting to ${app}…` },
+  2: { pct: 20, label: app => `Stopping ${app}…` },
+  3: { pct: 35, label: app => `Backing up ${app} database…` },
+  4: { pct: 50, label: app => `Running SQLite repairs on ${app}…` },
+  5: { pct: 92, label: app => `Generating report…` },
+  6: { pct: 95, label: app => `Waiting for ${app} to come back online…` },
+};
+
+function setProgressForPhase(n) {
+  const cfg = PHASE_PROGRESS[n];
+  if (!cfg) return;
+  const pretty = APPS[currentApp].name.charAt(0) + APPS[currentApp].name.slice(1).toLowerCase();
+  document.getElementById('progressFill').style.width = cfg.pct + '%';
+  document.getElementById('progressPct').textContent  = cfg.pct + '%';
+  document.getElementById('progressLabel').textContent = cfg.label(pretty);
+}
+
 function handleEntry(entry) {
   // A new job (manual or scheduled) starts with this SYS line. If the UI
   // isn't already in "running" mode (e.g. a scheduled job fired with no
@@ -1076,12 +1114,12 @@ function handleEntry(entry) {
   }
   if (entry.cls==='phase') {
     const t = entry.msg.toLowerCase();
-    if (t.includes('step 1')||t.includes('preflight')) setPhase(1,'active');
-    if (t.includes('step 2')||t.includes('shutdown'))  { setPhase(1,'done'); setPhase(2,'active'); }
-    if (t.includes('step 3')||t.includes('backup'))    { setPhase(2,'done'); setPhase(3,'active'); }
-    if (t.includes('step 4')||t.includes('repair'))    { setPhase(3,'done'); setPhase(4,'active'); }
-    if (t.includes('step 5')||t.includes('report'))    { setPhase(4,'done'); setPhase(5,'active'); }
-    if (t.includes('step 6')||t.includes('restart'))   { setPhase(5,'done'); setPhase(6,'active'); }
+    if (t.includes('step 1')||t.includes('preflight')) { setPhase(1,'active'); setProgressForPhase(1); }
+    if (t.includes('step 2')||t.includes('shutdown'))  { setPhase(1,'done'); setPhase(2,'active'); setProgressForPhase(2); }
+    if (t.includes('step 3')||t.includes('backup'))    { setPhase(2,'done'); setPhase(3,'active'); setProgressForPhase(3); }
+    if (t.includes('step 4')||t.includes('repair'))    { setPhase(3,'done'); setPhase(4,'active'); setProgressForPhase(4); }
+    if (t.includes('step 5')||t.includes('report'))    { setPhase(4,'done'); setPhase(5,'active'); setProgressForPhase(5); }
+    if (t.includes('step 6')||t.includes('restart'))   { setPhase(5,'done'); setPhase(6,'active'); setProgressForPhase(6); }
     return;
   }
   if (entry.cls==='__done__') {
@@ -1109,7 +1147,10 @@ function handleEntry(entry) {
 function finishJob() {
   running = false;
   document.getElementById('runBtn').disabled = false;
-  document.getElementById('stopBtn').style.display = 'none';
+  const stopBtn = document.getElementById('stopBtn');
+  stopBtn.style.display = 'none';
+  stopBtn.disabled = false;
+  if (stopBtn.dataset.html) stopBtn.innerHTML = stopBtn.dataset.html;
   // Keep SSE open while authenticated so the next scheduled run still streams
   // into the log. The stream is only closed by lockUI() / page unload.
   // Reload schedules so the row reflects the new last_status / next_run.

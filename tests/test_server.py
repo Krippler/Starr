@@ -478,3 +478,50 @@ def test_api_discover_endpoint_returns_payload(client, monkeypatch):
     body = json.loads(r.data)
     assert body["docker_available"] is False
     assert body["warnings"] == ["test"]
+
+
+def test_apps_url_uses_request_host_and_published_port(client, monkeypatch):
+    """The URL returned to the UI should use the host the browser used to
+    reach Starr, plus the container's published host port — not the bridge IP."""
+    monkeypatch.setitem(srv._discovery_cache, "apps", [{
+        "app": "sonarr",
+        "container_name": "sonarr",
+        "url": "http://172.17.0.29:8989",      # internal bridge URL
+        "internal_port": 8989,
+        "published_port": 8989,
+        "urlbase": "",
+        "db_path": "/appdata/sonarr/sonarr.db",
+    }])
+    srv.app.config["SONARR_APIKEY"] = "k"
+    try:
+        body = json.loads(client.get("/api/apps", headers={"Host": "192.168.10.37:8877"}).data)
+        sonarr = next(a for a in body if a["app"] == "sonarr")
+        assert sonarr["url"]          == "http://192.168.10.37:8989"
+        assert sonarr["internal_url"] == "http://172.17.0.29:8989"
+        assert sonarr["discovered"]   is True
+    finally:
+        srv.app.config["SONARR_APIKEY"] = ""
+        srv._discovery_cache["apps"] = []
+
+
+def test_resolve_swaps_to_internal_url_when_user_did_not_override(monkeypatch):
+    """When the request body's URL matches the host-perspective display URL
+    (i.e. the user submitted what we showed them), the resolver should swap
+    to the discovered internal/bridge URL for the actual API call."""
+    monkeypatch.setitem(srv._discovery_cache, "apps", [{
+        "app": "sonarr", "container_name": "sonarr",
+        "url": "http://172.17.0.29:8989",
+        "internal_port": 8989, "published_port": 8989, "urlbase": "",
+    }])
+    srv.app.config["SONARR_APIKEY"] = "k"
+    try:
+        cfg, err = srv._resolve_request_cfg({
+            "app": "sonarr", "url": "http://192.168.10.37:8989", "apikey": "k",
+        })
+        assert err is None
+        # _split_url('http://172.17.0.29:8989') -> ('172.17.0.29', 8989, '')
+        assert cfg["host"] == "172.17.0.29"
+        assert cfg["port"] == 8989
+    finally:
+        srv.app.config["SONARR_APIKEY"] = ""
+        srv._discovery_cache["apps"] = []
