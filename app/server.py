@@ -1002,9 +1002,29 @@ def api_backups():
     return jsonify(backups)
 
 
-# ---------------------------------------------------------------------------
-# Scheduler — automatic repair runs on a cron
-# ---------------------------------------------------------------------------
+@app.route("/api/backups/<name>", methods=["DELETE"])
+@require_api_key
+def api_backup_delete(name):
+    """Delete a single backup file. Guards against path traversal — only a
+    bare filename ending in .db inside BACKUP_DIR is accepted."""
+    # Reject anything that isn't a plain filename (no slashes, no '..').
+    if name != Path(name).name or not name.endswith(".db"):
+        return jsonify({"error": "invalid backup name"}), 400
+    backup_dir = app.config["BACKUP_DIR"]
+    target = (backup_dir / name).resolve()
+    # Ensure the resolved path is still inside BACKUP_DIR.
+    try:
+        target.relative_to(Path(backup_dir).resolve())
+    except ValueError:
+        return jsonify({"error": "invalid backup path"}), 400
+    if not target.exists():
+        return jsonify({"error": "not found"}), 404
+    try:
+        target.unlink()
+    except OSError as e:
+        return jsonify({"error": f"delete failed: {e}"}), 500
+    log.info("Deleted backup %s", name)
+    return jsonify({"status": "deleted", "name": name})
 def _run_scheduled(cfg: dict) -> dict:
     """Synchronously run a scheduled repair via _repair_worker. Resolves
     host/port/urlbase/apikey/container_name/db_path the same way the

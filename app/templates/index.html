@@ -84,7 +84,7 @@ header {
 .tab-name  { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); transition: color .2s; }
 .tab-port  { font-size: 9px; color: var(--dim); }
 .app-tab.active .tab-name { color: var(--tc, var(--app)); }
-.phases { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 16px; }
+.phases { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; }
 .phase {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 11px 8px; text-align: center; transition: all .3s; position: relative; overflow: hidden;
@@ -1222,11 +1222,28 @@ async function loadBackups() {
     if (res.status===401) { panel.innerHTML='<div class="empty-state" style="color:var(--err)">Unauthorized — enter your Web Key above.</div>'; return; }
     const data=await res.json();
     if (!data.length) { panel.innerHTML='<div class="empty-state">No backups yet. Run a repair to create one.</div>'; return; }
-    panel.innerHTML=`<table class="backup-table"><thead><tr><th>File</th><th>Size</th><th>Created</th></tr></thead><tbody>`+
-      data.map(b=>`<tr><td>${escHtml(b.name)}</td><td>${b.size_mb} MB</td><td>${new Date(b.created).toLocaleString()}</td></tr>`).join('')+
+    panel.innerHTML=`<table class="backup-table"><thead><tr><th>File</th><th>Size</th><th>Created</th><th style="text-align:right">Actions</th></tr></thead><tbody>`+
+      data.map(b=>`<tr><td>${escHtml(b.name)}</td><td>${b.size_mb} MB</td><td>${new Date(b.created).toLocaleString()}</td>`+
+        `<td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="deleteBackup('${escAttr(b.name)}')">Delete</button></td></tr>`).join('')+
       `</tbody></table>`;
   } catch(e) { panel.innerHTML='<div class="empty-state" style="color:var(--err)">Failed to load backups.</div>'; }
 }
+
+async function deleteBackup(name) {
+  if (!confirm(`Delete backup "${name}"?\n\nThis permanently removes the file from /backups and cannot be undone.`)) return;
+  const res = await fetch(`/api/backups/${encodeURIComponent(name)}`, { method:'DELETE', headers: authHeaders() });
+  if (res.status === 401) { handle401(); return; }
+  if (res.ok) {
+    logLine('SYS', `Backup deleted: ${name}`, 'sys');
+    loadBackups();
+  } else {
+    const e = await res.json().catch(()=>({error:'failed'}));
+    logLine('ERR', `Could not delete backup: ${e.error || res.status}`, 'err');
+  }
+}
+
+// Escape a value for safe use inside a single-quoted HTML attribute.
+function escAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
 
 // ── Schedules ────────────────────────────────────────────────────────────────
 const ALL_OPS = [
