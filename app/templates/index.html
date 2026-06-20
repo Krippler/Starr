@@ -36,7 +36,7 @@ body::before {
   animation: scan 10s linear infinite; pointer-events: none; z-index: 1;
 }
 @keyframes scan { to { top: 100%; } }
-.wrap { position: relative; z-index: 2; max-width: 1060px; margin: 0 auto; padding: 24px 20px 48px; }
+.wrap { position: relative; z-index: 2; max-width: 3840px; margin: 0 auto; padding: 24px clamp(20px, 3vw, 64px) 48px; }
 header {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 24px; padding-bottom: 20px; border-bottom: 1px solid var(--border);
