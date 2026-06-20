@@ -1252,6 +1252,7 @@ function renderSchedOpsCheckboxes() {
 }
 
 let editingScheduleId = null;
+let _schedulesById = {};   // populated by loadSchedules(), read by edit/delete
 function openScheduleForm(existing /* nullable */) {
   renderSchedOpsCheckboxes();
   editingScheduleId = existing?.id || null;
@@ -1308,6 +1309,10 @@ async function loadSchedules() {
     const res = await fetch('/api/schedules', { headers: authHeaders() });
     if (res.status === 401) { panel.innerHTML = '<div class="empty-state" style="color:var(--err)">Unauthorized.</div>'; return; }
     const data = await res.json();
+    // Keep the full objects around so Edit doesn't have to round-trip JSON
+    // through an HTML attribute (which broke on the double-encode and on any
+    // name containing a quote).
+    _schedulesById = Object.fromEntries((data || []).map(s => [s.id, s]));
     if (!data.length) {
       panel.innerHTML = '<div class="empty-state">No schedules yet. Click <strong>+ Add Schedule</strong> to automate a repair.</div>';
       return;
@@ -1342,15 +1347,16 @@ function renderScheduleRow(s) {
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
         <button class="btn btn-ghost btn-sm" onclick='runScheduleNow("${s.id}")'>Run now</button>
-        <button class="btn btn-ghost btn-sm" onclick='editSchedule(${JSON.stringify(JSON.stringify(s))})'>Edit</button>
-        <button class="btn btn-ghost btn-sm" onclick='deleteSchedule("${s.id}", "${escHtml(s.name).replace(/"/g, "&quot;")}")'>Delete</button>
+        <button class="btn btn-ghost btn-sm" onclick="editSchedule('${s.id}')">Edit</button>
+        <button class="btn btn-ghost btn-sm" onclick="deleteSchedule('${s.id}')">Delete</button>
       </div>
     </div>`;
 }
 
-function editSchedule(jsonStr) {
-  try { openScheduleForm(JSON.parse(JSON.parse(jsonStr))); }
-  catch(e) { logLine('ERR','Failed to edit schedule.','err'); }
+function editSchedule(sid) {
+  const s = _schedulesById[sid];
+  if (!s) { logLine('ERR','Schedule not found — refresh and try again.','err'); return; }
+  openScheduleForm(s);
 }
 
 async function runScheduleNow(sid) {
@@ -1364,7 +1370,8 @@ async function runScheduleNow(sid) {
   }
 }
 
-async function deleteSchedule(sid, name) {
+async function deleteSchedule(sid) {
+  const name = _schedulesById[sid]?.name || 'this schedule';
   if (!confirm(`Delete schedule "${name}"?`)) return;
   const res = await fetch(`/api/schedules/${sid}`, { method:'DELETE', headers: authHeaders() });
   if (res.status === 401) { handle401(); return; }
