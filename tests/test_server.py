@@ -547,3 +547,31 @@ def test_job_reset_preserves_sse_subscribers():
     # Emit reaches the subscriber after reset
     srv.emit("SYS", "post-reset", "sys")
     assert not fake_sub.empty(), "emit() did not push to surviving subscriber"
+
+
+# ── Backup deletion ───────────────────────────────────────────────────────────
+def test_backup_delete_removes_file(client, tmp_path):
+    backup_dir = tmp_path / "backups"
+    f = backup_dir / "sonarr_20250101_120000.db"
+    f.write_bytes(b"x" * 16)
+    srv.app.config["BACKUP_DIR"] = backup_dir
+    r = client.delete("/api/backups/sonarr_20250101_120000.db")
+    assert r.status_code == 200
+    assert not f.exists()
+
+
+def test_backup_delete_missing_returns_404(client, tmp_path):
+    backup_dir = tmp_path / "backups"
+    srv.app.config["BACKUP_DIR"] = backup_dir
+    r = client.delete("/api/backups/nope_20250101_000000.db")
+    assert r.status_code == 404
+
+
+def test_backup_delete_rejects_path_traversal(client, tmp_path):
+    backup_dir = tmp_path / "backups"
+    srv.app.config["BACKUP_DIR"] = backup_dir
+    # A non-.db name and a traversal attempt both rejected at validation.
+    assert client.delete("/api/backups/passwd").status_code == 400
+    # Flask normalises encoded slashes, so a traversal request 404s rather than
+    # escaping the dir — the key assertion is it never 200s.
+    assert client.delete("/api/backups/..%2f..%2fetc%2fpasswd").status_code in (400, 404)
