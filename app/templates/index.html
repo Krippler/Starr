@@ -1007,7 +1007,7 @@ async function startRepair() {
   const res = await fetch('/api/repair/start', { method:'POST', headers:authHeaders(), body:JSON.stringify(payload) });
   if (res.status===401) { handle401(); return; }
   if (!res.ok) { const e=await res.json(); logLine('ERR',e.error||'Failed to start repair.','err'); return; }
-  enterRunningMode();
+  enterRunningMode({ silent: true });   // user-initiated; no "live job detected"
   opOrder = [...selectedOps];
   document.getElementById('opPills').innerHTML = opOrder.map(id => {
     const op = APPS[currentApp].ops.find(o=>o.id===id);
