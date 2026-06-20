@@ -130,15 +130,23 @@ def require_api_key(f):
 # ---------------------------------------------------------------------------
 class JobState:
     def __init__(self):
+        # The SSE subscriber list and the lock that guards it survive across
+        # jobs — they're per-process state owned by the SSE generator(s) and
+        # the emit() helper, not by an individual repair run. Initialise them
+        # here so reset() (which clears job-specific state) never disturbs
+        # connected clients.
+        self.subscribers: list[queue.Queue] = []
+        self.lock        = threading.Lock()
         self.reset()
 
     def reset(self):
+        """Clear per-job state ONLY. SSE subscribers + the lock are left
+        alone — clearing them mid-run would silently sever every dashboard
+        that's listening to /api/repair/stream."""
         self.running     = False
         self.aborted     = False
         self.start_time  = None
         self.history     = []          # list of log entry dicts
-        self.subscribers = []          # list of queue.Queue (one per SSE client)
-        self.lock        = threading.Lock()
         self.result      = None        # populated on completion
 
 _job = JobState()

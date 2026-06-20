@@ -525,3 +525,25 @@ def test_resolve_swaps_to_internal_url_when_user_did_not_override(monkeypatch):
     finally:
         srv.app.config["SONARR_APIKEY"] = ""
         srv._discovery_cache["apps"] = []
+
+
+def test_job_reset_preserves_sse_subscribers():
+    """_job.reset() must NOT clear SSE subscribers — that would silently sever
+    connected dashboards. Regression test for the issue where the dashboard
+    stayed at 'Initializing... 0%' for a run while events were emitted only to
+    the (now-empty) subscriber list."""
+    import queue as _queue
+    srv._job.reset()
+    fake_sub = _queue.Queue(maxsize=8)
+    with srv._job.lock:
+        srv._job.subscribers.append(fake_sub)
+    original_lock = srv._job.lock
+
+    srv._job.reset()
+
+    assert fake_sub in srv._job.subscribers, "subscriber dropped by reset()"
+    assert srv._job.lock is original_lock, "reset() must not recreate the lock"
+
+    # Emit reaches the subscriber after reset
+    srv.emit("SYS", "post-reset", "sys")
+    assert not fake_sub.empty(), "emit() did not push to surviving subscriber"
