@@ -150,6 +150,9 @@ class ScheduleStore:
             "dry_run":        bool(payload.get("dry_run", False)),
             # Per-schedule notify level: inherit | off | error | warning | always
             "notify":         (payload.get("notify") or "inherit").lower(),
+            # Optional: target a named instance (default = the app's
+            # env/discovery instance). The server overlays its connection.
+            "instance_id":    (payload.get("instance_id") or "").strip().lower(),
             "container_name": (payload.get("container_name") or "").strip(),
             "last_run":       payload.get("last_run"),
             "last_status":    payload.get("last_status"),
@@ -210,6 +213,7 @@ class ScheduleRunner:
             return
         cfg = {
             "app":             sched["app"],
+            "instance_id":     sched.get("instance_id") or "",
             "ops":             list(sched["ops"]),
             "container_name":  sched.get("container_name") or "",
             "dry_run":         bool(sched.get("dry_run")),

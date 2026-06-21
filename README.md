@@ -240,6 +240,9 @@ https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml
 | `GET` | `/api/backups` | Yes | List backup files |
 | `GET` | `/api/history` | Yes | Recent run records (`?app=`, `?limit=`) |
 | `GET` | `/api/history/estimate` | Yes | Median duration of past runs (`?app=`) |
+| `GET` | `/api/instances` | Yes | List instances (env/discovery defaults + extras) |
+| `POST` | `/api/instances` | Yes | Add a named extra instance of an app |
+| `PUT`/`DELETE` | `/api/instances/<id>` | Yes | Edit / remove an extra instance |
 
 All protected endpoints require an `X-Api-Key` header matching your `SECRET_KEY`.  
 The SSE stream accepts `?api_key=` as a query parameter instead (browsers cannot set headers on `EventSource`).
