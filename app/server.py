@@ -1444,6 +1444,11 @@ def _merge_notify_overrides(saved: dict, body: dict) -> dict:
         if isinstance(urls, str):
             urls = [u.strip() for u in urls.splitlines()]
         out["apprise_urls"] = [u.strip() for u in (urls or []) if u.strip()]
+    if "webhook_urls" in body:
+        wh = body["webhook_urls"]
+        if isinstance(wh, str):
+            wh = [u.strip() for u in wh.splitlines()]
+        out["webhook_urls"] = [u.strip() for u in (wh or []) if u.strip()]
     if "signal" in body and isinstance(body["signal"], dict):
         s = body["signal"]
         recips = s.get("recipients", out["signal"].get("recipients", []))
