@@ -832,6 +832,137 @@ def _repair_worker(cfg: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Restore from backup
+# ---------------------------------------------------------------------------
+def _decompress_file(src: str, dest: str) -> None:
+    """Stream-decompress a .zst file → dest."""
+    import zstandard as zstd
+    dctx = zstd.ZstdDecompressor()
+    with open(src, "rb") as fin, open(dest, "wb") as fout:
+        dctx.copy_stream(fin, fout)
+
+
+def _step_restore(cfg, db_path: str, backup_path: str) -> bool:
+    """Replace db_path with the contents of backup_path. Makes a safety copy
+    of the current DB first, then removes stale -wal/-shm sidecars so SQLite
+    doesn't replay an old journal over the restored file."""
+    emit("PHASE", "── Restore ──────────────────────────────────────────────", "phase")
+    # 1. Safety-snapshot the CURRENT db so a restore is itself undoable.
+    try:
+        app.config["BACKUP_DIR"].mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safety = app.config["BACKUP_DIR"] / f"{cfg['app']}_{ts}_pre-restore.db.zst"
+        _compress_file(db_path, str(safety))
+        emit("OK", f"Saved pre-restore snapshot: {safety.name}", "ok")
+    except Exception as e:
+        emit("ERR", f"Could not snapshot current DB — aborting restore: {e}", "err")
+        return False
+    # 2. Write the backup over the live DB path.
+    try:
+        if backup_path.endswith(".zst"):
+            emit("INFO", f"Decompressing {Path(backup_path).name} → {db_path}", "info")
+            _decompress_file(backup_path, db_path)
+        else:
+            emit("INFO", f"Copying {Path(backup_path).name} → {db_path}", "info")
+            shutil.copy2(backup_path, db_path)
+    except Exception as e:
+        emit("ERR", f"Restore failed: {e}", "err")
+        return False
+    # 3. Drop stale WAL/SHM sidecars from the replaced DB.
+    for sidecar in (db_path + "-wal", db_path + "-shm"):
+        try:
+            Path(sidecar).unlink(missing_ok=True)
+        except OSError:
+            pass
+    mb = Path(db_path).stat().st_size / 1_048_576
+    emit("OK", f"Restored database ({mb:.1f} MB).", "ok")
+    return True
+
+
+def _restore_worker(cfg: dict) -> None:
+    _job.start_time = time.time()
+    _job.running    = True
+    _job.aborted    = False
+    _job.history    = []
+    _job.result     = None
+
+    emit("SYS", f"Starr DB Restore – job started for {cfg['app'].upper()}", "sys")
+    emit("SYS", f"Backup: {Path(cfg['backup_path']).name}", "sys")
+    try:
+        db_path = cfg.get("db_path")
+        if not db_path:
+            _job.result = {"status": "error", "message": "Could not resolve the target database path."}
+            return
+        if not _step_shutdown(cfg):
+            _job.result = {"status": "error", "message": "Shutdown failed or aborted; database not touched."}
+            return
+        # Defence in depth: never write over a DB the app may still hold open.
+        if not cfg.get("skip_shutdown"):
+            if _get_status(cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", ""),
+                           api=cfg.get("api", "v3")) is not None:
+                emit("ERR", "App is back ONLINE before restore — aborting to protect the database.", "err")
+                _step_restart(cfg, {})
+                _job.result = {"status": "error", "message": "App restarted before restore; aborted"}
+                return
+        if not _step_restore(cfg, db_path, cfg["backup_path"]):
+            _step_restart(cfg, {})
+            _job.result = {"status": "error", "message": "Restore failed; app restarted"}
+            return
+        _step_restart(cfg, {})
+        _job.result = {
+            "status":  "aborted" if _job.aborted else "ok",
+            "message": f"Restored {Path(cfg['backup_path']).name}",
+            "elapsed": _elapsed(),
+        }
+    except Exception as e:
+        emit("ERR", f"Unexpected error: {e}", "err")
+        log.exception("Restore worker crashed")
+        _job.result = {"status": "error", "message": str(e)}
+    finally:
+        _job.running = False
+        if not any(h.get("cls") == "__done__" for h in _job.history):
+            emit("__DONE__", json.dumps({
+                "fixed": 0,
+                "errors": 1 if (_job.result or {}).get("status") == "error" else 0,
+                "elapsed": _elapsed(), "dry_run": False,
+                "status": (_job.result or {}).get("status", "error"),
+                "message": (_job.result or {}).get("message", ""),
+            }), "__done__")
+        emit("SYS", "Job finished. SSE stream remains open.", "sys")
+        _notify.maybe_notify(_notify_config, cfg.get("app", "?"), _job.result or {})
+
+
+def _resolve_db_path(app_name: str) -> str | None:
+    """Best-effort resolve the on-disk DB path for an app (discovery first,
+    then APPDATA_DIR/<app>/<dbname>)."""
+    disc = _discovered_for(app_name)
+    if disc.get("db_path") and Path(disc["db_path"]).exists():
+        return disc["db_path"]
+    dbname = APP_DEFAULTS[app_name]["dbname"]
+    cand = app.config["APPDATA_DIR"] / app_name / dbname
+    return str(cand) if cand.exists() else None
+
+
+def _resolve_conn_lenient(cfg: dict) -> None:
+    """Like _resolve_request_cfg but never errors — restore only strictly needs
+    the container name (to stop) + db path (to write); url/apikey are optional
+    and used only for the offline re-check and online-after-restart wait."""
+    app_name = cfg["app"]
+    upper = app_name.upper()
+    disc = _discovered_for(app_name)
+    raw_url = (cfg.get("url") or "").strip() or app.config.get(f"{upper}_URL", "") or (disc.get("url") or "")
+    if raw_url:
+        h, p, b = _split_url(raw_url, default_port=APP_DEFAULTS[app_name]["port"])
+        cfg["host"], cfg["port"], cfg["urlbase"] = h, p, b
+    else:
+        cfg.setdefault("host", ""); cfg.setdefault("port", APP_DEFAULTS[app_name]["port"]); cfg.setdefault("urlbase", "")
+    cfg["api"] = APP_DEFAULTS[app_name]["api"]
+    cfg.setdefault("apikey", app.config.get(f"{upper}_APIKEY", ""))
+    if not cfg.get("container_name"):
+        cfg["container_name"] = disc.get("container_name") or ""
+
+
+# ---------------------------------------------------------------------------
 # Flask routes
 # ---------------------------------------------------------------------------
 @app.route("/")
@@ -1162,6 +1293,38 @@ def api_backups_bulk_delete():
             errors[name] = str(e)
     log.info("Bulk-deleted %d backup(s)", len(deleted))
     return jsonify({"deleted": deleted, "errors": errors})
+
+
+@app.route("/api/backups/<name>/restore", methods=["POST"])
+@require_api_key
+def api_backup_restore(name):
+    """Restore a backup over the app's live database. Runs as a streamed job:
+    stop container → snapshot current DB → write backup over it → start.
+    The app is inferred from the filename prefix (e.g. sonarr_…)."""
+    if _job.running:
+        return jsonify({"error": "A job is already running."}), 409
+    target = _resolve_backup(name)
+    if target is None:
+        return jsonify({"error": "invalid backup name"}), 400
+    if not target.exists():
+        return jsonify({"error": "not found"}), 404
+    app_name = name.split("_", 1)[0].lower()
+    if app_name not in APP_DEFAULTS:
+        return jsonify({"error": f"cannot infer a known app from '{name}'"}), 400
+
+    db_path = _resolve_db_path(app_name)
+    if not db_path:
+        return jsonify({"error": f"could not locate {app_name}'s database to restore into"}), 400
+
+    cfg = {"app": app_name, "backup_path": str(target), "db_path": db_path}
+    _resolve_conn_lenient(cfg)
+    if not cfg.get("container_name") and not cfg.get("apikey"):
+        return jsonify({"error": "no way to stop the app safely — need a discoverable "
+                                 "container (mount docker.sock) or an apikey"}), 400
+
+    _job.reset()
+    threading.Thread(target=_restore_worker, args=(cfg,), daemon=True).start()
+    return jsonify({"status": "started", "app": app_name, "backup": name}), 202
 
 
 def _run_scheduled(cfg: dict) -> dict:
