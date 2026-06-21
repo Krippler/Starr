@@ -563,10 +563,73 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
           <input type="checkbox" id="schedEnabled" checked>
           Enabled
         </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          Notify
+          <select id="schedNotify" style="font-size:10px">
+            <option value="inherit">Inherit global</option>
+            <option value="off">Off</option>
+            <option value="error">On error</option>
+            <option value="warning">On warning+</option>
+            <option value="always">Always</option>
+          </select>
+        </label>
       </div>
       <div class="action-row">
         <button class="btn btn-primary btn-sm" onclick="saveSchedule()" id="schedSaveBtn">Save schedule</button>
         <button class="btn btn-ghost btn-sm" onclick="closeScheduleForm()">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Notifications ──────────────────────────────────────────────────────── -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+        Notifications
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer">
+        <input type="checkbox" id="notifyEnabled"> Enabled
+      </label>
+    </div>
+    <div class="panel-body">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:10px">
+        Sends a message when a repair finishes. Apprise drives Discord / Telegram / ntfy / Pushover / Slack / gotify / email and more; Signal posts to a
+        <a href="https://github.com/bbernhard/signal-cli-rest-api" target="_blank" rel="noopener" style="color:var(--app)">signal-cli-rest-api</a> server.
+      </div>
+      <div class="form-grid" style="margin-bottom:10px">
+        <div class="field">
+          <label>Notify level (global default)</label>
+          <select id="notifyLevel">
+            <option value="off">Off</option>
+            <option value="error">On error</option>
+            <option value="warning">On warning or error</option>
+            <option value="always">Always</option>
+          </select>
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:10px">
+        <label>Apprise URLs <span style="color:var(--muted);font-size:9px">one per line — e.g. ntfy://ntfy.sh/mytopic, discord://…, tgram://…</span></label>
+        <textarea id="notifyAppriseUrls" rows="3" style="width:100%;resize:vertical;font-family:'JetBrains Mono',monospace;font-size:11px"></textarea>
+      </div>
+      <div style="font-size:10px;color:var(--dry);letter-spacing:.08em;margin:6px 0">SIGNAL (signal-cli-rest-api)</div>
+      <div class="form-grid" style="margin-bottom:10px">
+        <div class="field">
+          <label>API URL</label>
+          <input id="notifySignalUrl" placeholder="http://signal-cli-rest-api:8080">
+        </div>
+        <div class="field">
+          <label>From number</label>
+          <input id="notifySignalNumber" placeholder="+15551234567">
+        </div>
+      </div>
+      <div class="field" style="margin-bottom:12px">
+        <label>Recipients <span style="color:var(--muted);font-size:9px">one per line — phone number or group id</span></label>
+        <textarea id="notifySignalRecipients" rows="2" style="width:100%;resize:vertical;font-family:'JetBrains Mono',monospace;font-size:11px"></textarea>
+      </div>
+      <div class="action-row">
+        <button class="btn btn-primary btn-sm" onclick="saveNotify()" id="notifySaveBtn">Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="testNotify()" id="notifyTestBtn">Send test</button>
       </div>
     </div>
   </div>
@@ -804,6 +867,7 @@ function unlockUI() {
   document.getElementById('mainShell').style.display = '';
   loadBackups();
   loadSchedules();
+  loadNotify();
   setStatus('READY', 'var(--ok)', false);
   // Keep an SSE connection open while authenticated so scheduled (and any
   // server-initiated) jobs stream into the Repair Log live instead of
@@ -1318,6 +1382,7 @@ function openScheduleForm(existing /* nullable */) {
   document.getElementById('schedSkipIfClean').checked  = existing ? !!existing.skip_if_clean : true;
   document.getElementById('schedDryRun').checked       = !!existing?.dry_run;
   document.getElementById('schedEnabled').checked      = existing ? !!existing.enabled : true;
+  document.getElementById('schedNotify').value         = existing?.notify || 'inherit';
   if (existing?.ops) {
     document.querySelectorAll('.sched-op').forEach(cb => { cb.checked = existing.ops.includes(cb.value); });
   }
@@ -1343,6 +1408,7 @@ async function saveSchedule() {
     skip_if_clean: document.getElementById('schedSkipIfClean').checked,
     dry_run:       document.getElementById('schedDryRun').checked,
     enabled:       document.getElementById('schedEnabled').checked,
+    notify:        document.getElementById('schedNotify').value,
   };
   const url    = editingScheduleId ? `/api/schedules/${editingScheduleId}` : '/api/schedules';
   const method = editingScheduleId ? 'PUT' : 'POST';
@@ -1432,6 +1498,59 @@ async function deleteSchedule(sid) {
   const res = await fetch(`/api/schedules/${sid}`, { method:'DELETE', headers: authHeaders() });
   if (res.status === 401) { handle401(); return; }
   if (res.ok) { logLine('SYS','Schedule deleted.','sys'); loadSchedules(); }
+}
+
+// ── Notifications ─────────────────────────────────────────────────────────────
+async function loadNotify() {
+  try {
+    const res = await fetch('/api/notify', { headers: authHeaders() });
+    if (!res.ok) return;
+    const c = await res.json();
+    document.getElementById('notifyEnabled').checked        = !!c.enabled;
+    document.getElementById('notifyLevel').value            = c.level || 'error';
+    document.getElementById('notifyAppriseUrls').value      = (c.apprise_urls || []).join('\n');
+    document.getElementById('notifySignalUrl').value        = c.signal?.api_url || '';
+    document.getElementById('notifySignalNumber').value     = c.signal?.number || '';
+    document.getElementById('notifySignalRecipients').value = (c.signal?.recipients || []).join('\n');
+  } catch(_){}
+}
+
+function _notifyPayload() {
+  return {
+    enabled:      document.getElementById('notifyEnabled').checked,
+    level:        document.getElementById('notifyLevel').value,
+    apprise_urls: document.getElementById('notifyAppriseUrls').value,
+    signal: {
+      api_url:    document.getElementById('notifySignalUrl').value.trim(),
+      number:     document.getElementById('notifySignalNumber').value.trim(),
+      recipients: document.getElementById('notifySignalRecipients').value,
+    },
+  };
+}
+
+async function saveNotify() {
+  const res = await fetch('/api/notify', { method:'PUT', headers: authHeaders(), body: JSON.stringify(_notifyPayload()) });
+  if (res.status === 401) { handle401(); return; }
+  if (res.ok) { logLine('SYS','Notification settings saved.','sys'); loadNotify(); }
+  else { const e = await res.json().catch(()=>({error:'failed'})); logLine('ERR', e.error || 'Save failed', 'err'); }
+}
+
+async function testNotify() {
+  const btn = document.getElementById('notifyTestBtn');
+  btn.disabled = true; const old = btn.textContent; btn.textContent = 'Sending…';
+  try {
+    const res = await fetch('/api/notify/test', { method:'POST', headers: authHeaders(), body: JSON.stringify(_notifyPayload()) });
+    if (res.status === 401) { handle401(); return; }
+    const d = await res.json();
+    if (d.sent > 0 && (!d.errors || !d.errors.length)) {
+      logLine('OK', `Test notification sent to ${d.sent} target(s).`, 'ok');
+    } else if (d.sent > 0) {
+      logLine('WARN', `Test sent to ${d.sent}, with errors: ${(d.errors||[]).join('; ')}`, 'warn');
+    } else {
+      logLine('ERR', `Test sent nothing. ${(d.errors||['no targets configured']).join('; ')}`, 'err');
+    }
+  } catch(e) { logLine('ERR','Test failed: '+e.message,'err'); }
+  finally { btn.disabled = false; btn.textContent = old; }
 }
 
 // CSS rules added inline so we don't need to touch the <style> block
