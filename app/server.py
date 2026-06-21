@@ -461,9 +461,10 @@ def _step_backup(cfg, db_path: str) -> str | None:
 
     app.config["BACKUP_DIR"].mkdir(parents=True, exist_ok=True)
     ts      = datetime.now().strftime("%Y%m%d_%H%M%S")
+    label   = cfg.get("label") or cfg["app"]      # instance id, or app for the default
     compress = bool(app.config.get("BACKUP_COMPRESS", True))
     suffix  = ".db.zst" if compress else ".db"
-    dest = app.config["BACKUP_DIR"] / f"{cfg['app']}_{ts}{suffix}"
+    dest = app.config["BACKUP_DIR"] / f"{label}_{ts}{suffix}"
 
     if cfg.get("dry_run"):
         emit("DRY", f"[DRY] Would back up {db_path} → {dest}", "dry"); return str(dest)
@@ -479,7 +480,7 @@ def _step_backup(cfg, db_path: str) -> str | None:
                 # zstandard not available — fall back to a plain copy so a
                 # backup is still made (never block the safety backup).
                 emit("WARN", "zstandard not installed — storing uncompressed.", "warn")
-                dest = app.config["BACKUP_DIR"] / f"{cfg['app']}_{ts}.db"
+                dest = app.config["BACKUP_DIR"] / f"{label}_{ts}.db"
                 shutil.copy2(db_path, dest)
                 compress = False
         else:
@@ -494,12 +495,12 @@ def _step_backup(cfg, db_path: str) -> str | None:
     else:
         emit("OK", f"Backup created ({out_mb:.1f} MB)", "ok")
 
-    # Prune old backups (match both .db and .db.zst for this app)
+    # Prune old backups (match both .db and .db.zst for this instance label)
     max_days = app.config["MAX_BACKUP_AGE_DAYS"]
     if max_days > 0:
         cutoff  = time.time() - max_days * 86400
         removed = 0
-        for old in app.config["BACKUP_DIR"].glob(f"{cfg['app']}_*.db*"):
+        for old in app.config["BACKUP_DIR"].glob(f"{label}_*.db*"):
             if old.stat().st_mtime < cutoff:
                 old.unlink(missing_ok=True); removed += 1
         if removed:
@@ -874,6 +875,7 @@ def _record_history(cfg: dict, result: dict, db_path) -> None:
         duration_s = round(time.time() - _job.start_time, 1) if _job.start_time else 0
         _history.record({
             "app":           (cfg.get("app") or "?").lower(),
+            "instance":      (cfg.get("label") or cfg.get("app") or "?").lower(),
             "status":        result.get("status", "unknown"),
             "fixed":         result.get("fixed", 0),
             "errors":        result.get("errors", 0),
@@ -1146,6 +1148,24 @@ def api_apps():
     return jsonify(apps)
 
 
+def _apply_instance(cfg: dict) -> str | None:
+    """If the request names an instance_id, overlay that instance's connection
+    onto cfg (request body still wins per field). Sets cfg['label'] — the
+    filename/history key — to the instance id (or the bare app name for the
+    env/discovery default). Returns an error string or None."""
+    iid = (cfg.get("instance_id") or "").strip().lower()
+    if iid and iid not in APP_DEFAULTS:
+        inst = _instances.get(iid)
+        if not inst:
+            return f"unknown instance '{iid}'"
+        cfg["app"] = inst["app"]
+        for k in ("url", "apikey", "container_name", "db_path"):
+            if inst.get(k) and not cfg.get(k):
+                cfg[k] = inst[k]
+    cfg["label"] = iid or (cfg.get("app") or "").lower()
+    return None
+
+
 def _resolve_request_cfg(cfg: dict) -> tuple[dict, str | None]:
     """Fill cfg with env + discovery defaults; return (cfg, error_message)."""
     app_name = (cfg.get("app") or "").lower()
@@ -1196,6 +1216,9 @@ def api_start():
         return jsonify({"error": "A repair job is already running."}), 409
 
     cfg = request.get_json(force=True) or {}
+    err = _apply_instance(cfg)
+    if err:
+        return jsonify({"error": err}), 400
     cfg, err = _resolve_request_cfg(cfg)
     if err:
         return jsonify({"error": err}), 400
@@ -1374,7 +1397,8 @@ def api_backups_bulk_delete():
 def api_backup_restore(name):
     """Restore a backup over the app's live database. Runs as a streamed job:
     stop container → snapshot current DB → write backup over it → start.
-    The app is inferred from the filename prefix (e.g. sonarr_…)."""
+    The instance (and its app type) is inferred from the filename prefix —
+    e.g. sonarr_… (default) or sonarr-4k_… (a named instance)."""
     if _job.running:
         return jsonify({"error": "A job is already running."}), 409
     target = _resolve_backup(name)
@@ -1382,15 +1406,23 @@ def api_backup_restore(name):
         return jsonify({"error": "invalid backup name"}), 400
     if not target.exists():
         return jsonify({"error": "not found"}), 404
-    app_name = name.split("_", 1)[0].lower()
+    label    = name.split("_", 1)[0].lower()
+    app_name = _instances.app_for(label)
     if app_name not in APP_DEFAULTS:
         return jsonify({"error": f"cannot infer a known app from '{name}'"}), 400
 
-    db_path = _resolve_db_path(app_name)
-    if not db_path:
-        return jsonify({"error": f"could not locate {app_name}'s database to restore into"}), 400
-
-    cfg = {"app": app_name, "backup_path": str(target), "db_path": db_path}
+    cfg = {"app": app_name, "label": label, "backup_path": str(target)}
+    # For a named instance, use its stored connection + db path.
+    inst = _instances.get(label) if label != app_name else None
+    if inst:
+        for k in ("url", "apikey", "container_name", "db_path"):
+            if inst.get(k):
+                cfg[k] = inst[k]
+    if not cfg.get("db_path"):
+        db_path = _resolve_db_path(app_name)
+        if not db_path:
+            return jsonify({"error": f"could not locate {app_name}'s database to restore into"}), 400
+        cfg["db_path"] = db_path
     _resolve_conn_lenient(cfg)
     if not cfg.get("container_name") and not cfg.get("apikey"):
         return jsonify({"error": "no way to stop the app safely — need a discoverable "
@@ -1409,6 +1441,9 @@ def _run_scheduled(cfg: dict) -> dict:
         return {"status": "skipped", "reason": "another job in progress"}
     sched_name = cfg.get("_schedule_name") or "schedule"
     log.info("Scheduled run firing: %s", sched_name)
+    err = _apply_instance(cfg)
+    if err:
+        return {"status": "error", "message": err}
     cfg, err = _resolve_request_cfg(cfg)
     if err:
         return {"status": "error", "message": err}
@@ -1418,6 +1453,7 @@ def _run_scheduled(cfg: dict) -> dict:
 
 from schedules import ScheduleStore, ScheduleRunner   # noqa: E402
 from history import HistoryStore                       # noqa: E402
+from instances import InstanceStore                    # noqa: E402
 import notify as _notify                               # noqa: E402
 import atexit                                          # noqa: E402
 
@@ -1426,6 +1462,83 @@ _notify_config = _notify.NotifyConfig(app.config["BACKUP_DIR"] / ".starr-notify.
 
 # Persistent run history (last-run pill, pre-repair estimate, trend chart).
 _history = HistoryStore(app.config["BACKUP_DIR"] / ".starr-history.json")
+
+# User-added extra instances (e.g. a second Sonarr). Defaults stay env/discovery.
+_instances = InstanceStore(app.config["BACKUP_DIR"] / ".starr-instances.json",
+                           APP_DEFAULTS.keys())
+
+
+def _synthesized_defaults() -> list[dict]:
+    """The env/discovery-derived default instance for each app (id == app),
+    in the same shape the UI uses for stored instances."""
+    discovered = {d["app"]: d for d in (_discovery_cache.get("apps") or [])}
+    browser_host = _request_host_only()
+    out = []
+    for name in APP_DEFAULTS:
+        upper = name.upper()
+        apikey = app.config.get(f"{upper}_APIKEY", "")
+        env_url = app.config.get(f"{upper}_URL", "")
+        disc = discovered.get(name, {})
+        display_url = env_url
+        if not display_url and disc.get("published_port"):
+            display_url = f"http://{browser_host}:{disc['published_port']}" + (disc.get("urlbase") or "")
+        if not display_url:
+            display_url = disc.get("url") or ""
+        if not (apikey or display_url):
+            continue
+        out.append({
+            "id":             name,
+            "app":            name,
+            "name":           name.capitalize(),
+            "url":            display_url,
+            "apikey":         apikey,
+            "container_name": disc.get("container_name") or "",
+            "db_path":        disc.get("db_path") or "",
+            "default":        True,
+            "discovered":     bool(disc),
+            "configured":     bool(apikey),
+        })
+    return out
+
+
+@app.route("/api/instances")
+@require_api_key
+def api_instances():
+    """All instances: synthesized env/discovery defaults (one per configured
+    app, id == app) merged with user-added extras, grouped under each app."""
+    items = _synthesized_defaults()
+    for s in _instances.all():
+        items.append({**s, "default": False, "configured": bool(s.get("apikey"))})
+    return jsonify(items)
+
+
+@app.route("/api/instances", methods=["POST"])
+@require_api_key
+def api_instances_add():
+    try:
+        return jsonify(_instances.add(request.get_json(force=True) or {})), 201
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/instances/<iid>", methods=["PUT"])
+@require_api_key
+def api_instances_update(iid):
+    try:
+        updated = _instances.update(iid, request.get_json(force=True) or {})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    if updated is None:
+        return jsonify({"error": "not found (defaults are env/discovery-managed)"}), 404
+    return jsonify(updated)
+
+
+@app.route("/api/instances/<iid>", methods=["DELETE"])
+@require_api_key
+def api_instances_delete(iid):
+    if not _instances.delete(iid):
+        return jsonify({"error": "not found (defaults are env/discovery-managed)"}), 404
+    return jsonify({"status": "deleted", "id": iid})
 
 
 @app.route("/api/history")

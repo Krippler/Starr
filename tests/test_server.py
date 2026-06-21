@@ -1025,3 +1025,98 @@ def test_flag_backup_marks_aborted(tmp_path):
     out = srv._flag_backup(str(p), {"integrity": ("ok", 0), "vacuum": ("aborted", 0)})
     assert out.endswith("_aborted.db")
     assert os.path.exists(out)
+
+
+# ── Instances (multiple per app) ────────────────────────────────────────────────
+def test_instance_store_add_and_id(tmp_path):
+    from instances import InstanceStore
+    st = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    inst = st.add({"app": "sonarr", "name": "4K", "url": "http://h:8989", "apikey": "k"})
+    assert inst["app"] == "sonarr"
+    assert inst["id"] == "sonarr-4k"        # app-prefixed, hyphenated
+    assert "-" in inst["id"]                # never collides with bare app default
+    # second with same name gets a unique id
+    inst2 = st.add({"app": "sonarr", "name": "4K", "url": "http://h:8990"})
+    assert inst2["id"] != inst["id"]
+
+
+def test_instance_store_validation(tmp_path):
+    from instances import InstanceStore
+    st = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    for bad in ({"app": "nope", "name": "x", "url": "u"},
+                {"app": "sonarr", "name": "", "url": "u"},
+                {"app": "sonarr", "name": "x", "url": ""}):
+        with pytest.raises(ValueError):
+            st.add(bad)
+
+
+def test_instance_store_app_for(tmp_path):
+    from instances import InstanceStore
+    st = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    st.add({"app": "sonarr", "name": "anime", "url": "http://h:8989"})
+    assert st.app_for("sonarr") == "sonarr"          # bare default
+    assert st.app_for("sonarr-anime") == "sonarr"    # stored instance id
+    assert st.app_for("radarr-foo") == "radarr"      # unknown id, hyphen fallback
+    assert st.app_for("bogus") is None
+
+
+def test_instance_store_update_delete(tmp_path):
+    from instances import InstanceStore
+    st = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    inst = st.add({"app": "radarr", "name": "uhd", "url": "http://h:7878"})
+    up = st.update(inst["id"], {"url": "http://h:9999", "app": "sonarr"})
+    assert up["url"] == "http://h:9999"
+    assert up["app"] == "radarr"            # app type is immutable on update
+    assert st.delete(inst["id"]) is True
+    assert st.get(inst["id"]) is None
+
+
+def test_instances_endpoints(client, tmp_path):
+    from instances import InstanceStore
+    srv._instances = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    # add
+    r = client.post("/api/instances", data=json.dumps(
+        {"app": "sonarr", "name": "4K", "url": "http://h:8989", "apikey": "k"}),
+        content_type="application/json")
+    assert r.status_code == 201
+    iid = json.loads(r.data)["id"]
+    # list includes the extra (default synthesis is empty with no env config)
+    r = client.get("/api/instances")
+    listed = json.loads(r.data)
+    assert any(x["id"] == iid and x["default"] is False for x in listed)
+    # update + delete
+    assert client.put(f"/api/instances/{iid}", data=json.dumps({"name": "UHD"}),
+                      content_type="application/json").status_code == 200
+    assert client.delete(f"/api/instances/{iid}").status_code == 200
+    assert client.delete(f"/api/instances/{iid}").status_code == 404
+
+
+def test_apply_instance_overlay(tmp_path):
+    from instances import InstanceStore
+    srv._instances = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    inst = srv._instances.add({"app": "sonarr", "name": "4K",
+                               "url": "http://h:8989", "apikey": "K",
+                               "container_name": "sonarr4k"})
+    cfg = {"instance_id": inst["id"], "ops": ["integrity"]}
+    err = srv._apply_instance(cfg)
+    assert err is None
+    assert cfg["app"] == "sonarr"
+    assert cfg["label"] == inst["id"]
+    assert cfg["apikey"] == "K" and cfg["container_name"] == "sonarr4k"
+    # default app (no instance_id) → label is the app name
+    cfg2 = {"app": "radarr"}
+    assert srv._apply_instance(cfg2) is None
+    assert cfg2["label"] == "radarr"
+    # unknown instance id → error
+    assert srv._apply_instance({"instance_id": "sonarr-ghost"}) is not None
+
+
+def test_backup_filename_uses_label(monkeypatch, tmp_path):
+    bdir = tmp_path / "backups"; bdir.mkdir()
+    srv.app.config["BACKUP_DIR"] = bdir
+    srv.app.config["BACKUP_COMPRESS"] = False
+    db = tmp_path / "src.db"; db.write_bytes(b"data")
+    srv._job.reset()
+    out = srv._step_backup({"app": "sonarr", "label": "sonarr-4k"}, str(db))
+    assert out is not None
+    assert os.path.basename(out).startswith("sonarr-4k_")
