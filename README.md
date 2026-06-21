@@ -19,7 +19,7 @@
 - **Auto-backup** before every repair, with configurable retention (default 7 days)
 - **6 SQLite operations**: integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE
 - **Dry-run mode** — preview every step without making changes
-- **Run history** — last-run pill, pre-repair time estimate, and persistent per-app run log
+- **Run history** — last-run pill, pre-repair time estimate, per-app DB-size / duration trend charts, and a persistent run log
 - **Supports four *arr apps** — Sonarr · Radarr · Lidarr · Sportarr
 - **Docker image** — `linux/amd64` (Unraid, Synology, most x86 NAS), published to Docker Hub + GHCR and signed with cosign
 - **Unraid Community Apps template** included

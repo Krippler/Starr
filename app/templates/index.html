@@ -245,6 +245,16 @@ header {
 .run-meta .rm-err  { background: var(--err, #f25c54); }
 .run-meta .rm-clean{ background: var(--app, #6cf); }
 .run-meta strong { color: var(--fg, #e6e6e6); font-weight: 600; }
+.trend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.trend-card { border: 1px solid var(--border, #2a2a2a); border-radius: 8px; padding: 12px 14px; background: rgba(255,255,255,.015); }
+.trend-card .tc-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.trend-card .tc-title { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.trend-card .tc-latest { font-size: 13px; font-weight: 600; color: var(--fg, #e6e6e6); }
+.trend-card .tc-latest small { font-size: 10px; font-weight: 400; color: var(--muted); }
+.trend-card svg { width: 100%; height: 56px; display: block; }
+.trend-card .tc-bar { fill: var(--app, #6cf); opacity: .55; }
+.trend-card .tc-bar:last-child { opacity: 1; }
+.trend-card .tc-foot { font-size: 9px; color: var(--muted); display: flex; justify-content: space-between; margin-top: 4px; }
 .link-btn { font-family: 'JetBrains Mono', monospace; font-size: 10px; background: none; border: none; cursor: pointer; letter-spacing: .08em; text-transform: uppercase; padding: 3px 0; text-decoration: underline; text-underline-offset: 3px; transition: filter .15s; }
 .link-btn.accent { color: var(--app); }
 .link-btn.muted  { color: var(--muted); }
@@ -506,6 +516,20 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       Refresh Backups
     </button>
     <span id="runMeta" class="run-meta"></span>
+  </div>
+
+  <!-- ── Trends ─────────────────────────────────────────────────────────────── -->
+  <div class="panel">
+    <div class="panel-head">
+      <div class="panel-title">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>
+        Trends
+      </div>
+      <span id="trendsMeta" style="font-size:10px;color:var(--muted)"></span>
+    </div>
+    <div class="panel-body" id="trendsPanel">
+      <div class="empty-state">No run history yet for this app.</div>
+    </div>
   </div>
 
   <div class="panel">
@@ -896,7 +920,7 @@ function unlockUI() {
   loadBackups();
   loadSchedules();
   loadNotify();
-  refreshRunMeta();
+  refreshRunMeta(); renderTrends();
   setStatus('READY', 'var(--ok)', false);
   // Keep an SSE connection open while authenticated so scheduled (and any
   // server-initiated) jobs stream into the Repair Log live instead of
@@ -1045,7 +1069,7 @@ function switchApp(app) {
 
   // Pre-fill from env if available
   loadEnvConfig({ logErrors: false });
-  refreshRunMeta();
+  refreshRunMeta(); renderTrends();
 }
 
 // ── Last-run pill + pre-repair estimate ─────────────────────────────────────────
@@ -1092,6 +1116,73 @@ async function refreshRunMeta() {
     }
     el.innerHTML = parts.join('');
   } catch (_) { el.innerHTML = ''; }
+}
+
+// ── Trend chart (DB size + repair duration over recent runs) ────────────────────
+function fmtBytes(n) {
+  if (n == null) return '—';
+  const u = ['B','KB','MB','GB','TB']; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n : n.toFixed(1)) + ' ' + u[i];
+}
+function sparkBars(values, fmt) {
+  // Returns inline SVG of bar columns scaled to the max value. Last bar is
+  // drawn at full opacity (see .tc-bar:last-child) to mark the latest run.
+  const W = 280, H = 56, n = values.length;
+  if (!n) return '';
+  const max = Math.max(...values, 1);
+  const gap = n > 1 ? 2 : 0;
+  const bw = (W - gap * (n - 1)) / n;
+  const bars = values.map((v, i) => {
+    const h = Math.max(2, (v / max) * (H - 4));
+    const x = i * (bw + gap);
+    const y = H - h;
+    return `<rect class="tc-bar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${h.toFixed(1)}" rx="1"><title>${escHtml(fmt(v))}</title></rect>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${bars}</svg>`;
+}
+async function renderTrends() {
+  const panel = document.getElementById('trendsPanel');
+  const meta  = document.getElementById('trendsMeta');
+  if (!panel || !getWebKey()) return;
+  const appAtRequest = currentApp;
+  try {
+    const res = await fetch(`/api/history?app=${currentApp}&limit=30`, { headers: authHeaders() });
+    if (res.status === 401) { handle401(); return; }
+    if (appAtRequest !== currentApp) return;
+    const hist = res.ok ? await res.json() : [];
+    if (!hist.length) {
+      panel.innerHTML = '<div class="empty-state">No run history yet for this app.</div>';
+      if (meta) meta.textContent = '';
+      return;
+    }
+    // API returns newest-first; charts read left→right oldest→newest.
+    const chron = hist.slice().reverse();
+    const durs  = chron.filter(e => e.duration_s > 0).map(e => e.duration_s);
+    const sizes = chron.filter(e => e.db_bytes != null).map(e => e.db_bytes);
+    const cards = [];
+    if (durs.length) {
+      cards.push(`<div class="trend-card">
+        <div class="tc-head"><span class="tc-title">Repair duration</span>
+          <span class="tc-latest">${fmtDuration(durs[durs.length-1])} <small>latest</small></span></div>
+        ${sparkBars(durs, fmtDuration)}
+        <div class="tc-foot"><span>oldest</span><span>${durs.length} run${durs.length!==1?'s':''}</span><span>newest</span></div>
+      </div>`);
+    }
+    if (sizes.length) {
+      cards.push(`<div class="trend-card">
+        <div class="tc-head"><span class="tc-title">Database size</span>
+          <span class="tc-latest">${fmtBytes(sizes[sizes.length-1])} <small>latest</small></span></div>
+        ${sparkBars(sizes, fmtBytes)}
+        <div class="tc-foot"><span>oldest</span><span>${sizes.length} run${sizes.length!==1?'s':''}</span><span>newest</span></div>
+      </div>`);
+    }
+    panel.innerHTML = cards.length ? `<div class="trend-grid">${cards.join('')}</div>`
+                                   : '<div class="empty-state">No measurable runs yet for this app.</div>';
+    if (meta) meta.textContent = `${APPS[currentApp].name} · last ${hist.length} run${hist.length!==1?'s':''}`;
+  } catch (_) {
+    panel.innerHTML = '<div class="empty-state">Could not load trends.</div>';
+  }
 }
 
 // ── Ops ───────────────────────────────────────────────────────────────────────
@@ -1335,7 +1426,7 @@ function finishJob() {
   // into the log. The stream is only closed by lockUI() / page unload.
   // Reload schedules so the row reflects the new last_status / next_run.
   if (typeof loadSchedules === 'function') loadSchedules();
-  refreshRunMeta();
+  refreshRunMeta(); renderTrends();
 }
 
 function setPhase(n,state) { const el=document.getElementById('ph'+n); if(el) el.className='phase '+state; }
