@@ -72,45 +72,70 @@ class HistoryStore:
         with self._lock:
             return [dict(e) for e in self._items]
 
-    def recent(self, app: str | None = None, limit: int = 50) -> list[dict]:
-        """Newest-first list, optionally filtered to one app."""
+    def recent(self, app: str | None = None, instance: str | None = None,
+               limit: int = 50) -> list[dict]:
+        """Newest-first list, optionally filtered to one app or one instance.
+
+        For pre-multi-instance records (no `instance` field), the bare app
+        name is treated as their implicit instance label so the default
+        instance's history still shows past runs from before the upgrade.
+        """
         with self._lock:
             items = list(self._items)
-        if app:
+        if instance:
+            instance = instance.lower()
+            items = [
+                e for e in items
+                if (e.get("instance") or (e.get("app") or "")).lower() == instance
+            ]
+        elif app:
             app = app.lower()
             items = [e for e in items if (e.get("app") or "").lower() == app]
         items.reverse()
         return [dict(e) for e in items[:limit]]
 
-    def estimate(self, app: str, sample: int = 10) -> dict:
+    def estimate(self, app: str | None = None, instance: str | None = None,
+                 sample: int = 10) -> dict:
         """Predict how long a repair will take from past real runs.
 
         Considers only completed, non-dry-run repairs that actually did work
-        (status ok/warning) for this app — skip-if-clean and errored runs
-        aren't representative. Returns median seconds plus the sample size so
-        the UI can phrase its confidence ("~2m, based on 4 runs")."""
-        app = (app or "").lower()
+        (status ok/warning) — skip-if-clean and errored runs aren't
+        representative. When `instance` is given the median is per-instance
+        (with the same legacy-records fallback as recent()); otherwise it
+        falls back to the per-app median. Returns sample size so the UI can
+        phrase confidence ("~2m, based on 4 runs")."""
         with self._lock:
             items = list(self._items)
+        if instance:
+            instance_l = instance.lower()
+            def match(e):
+                return (e.get("instance") or (e.get("app") or "")).lower() == instance_l
+        else:
+            app_l = (app or "").lower()
+            def match(e):
+                return (e.get("app") or "").lower() == app_l
         durations = [
             e["duration_s"]
             for e in items
-            if (e.get("app") or "").lower() == app
+            if match(e)
             and not e.get("dry_run")
             and e.get("status") in ("ok", "warning")
             and isinstance(e.get("duration_s"), (int, float))
             and e["duration_s"] > 0
         ]
         durations = durations[-sample:]
-        if not durations:
-            return {"app": app, "seconds": None, "samples": 0}
-        return {
-            "app": app,
-            "seconds": round(statistics.median(durations), 1),
-            "samples": len(durations),
-        }
+        out = {"seconds": None, "samples": 0}
+        if instance:
+            out["instance"] = instance
+        if app:
+            out["app"] = app.lower()
+        if durations:
+            out["seconds"] = round(statistics.median(durations), 1)
+            out["samples"] = len(durations)
+        return out
 
-    def last(self, app: str | None = None) -> dict | None:
-        """Most recent record (optionally for one app), or None."""
-        recent = self.recent(app=app, limit=1)
+    def last(self, app: str | None = None,
+             instance: str | None = None) -> dict | None:
+        """Most recent record (optionally for one app or instance), or None."""
+        recent = self.recent(app=app, instance=instance, limit=1)
         return recent[0] if recent else None

@@ -239,8 +239,8 @@ https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml
 | `GET` | `/api/repair/status` | Yes | Current job state |
 | `GET` | `/api/repair/stream` | Yes | SSE live log stream |
 | `GET` | `/api/backups` | Yes | List backup files |
-| `GET` | `/api/history` | Yes | Recent run records (`?app=`, `?limit=`) |
-| `GET` | `/api/history/estimate` | Yes | Median duration of past runs (`?app=`) |
+| `GET` | `/api/history` | Yes | Recent run records (`?instance=` or `?app=`, `?limit=`) |
+| `GET` | `/api/history/estimate` | Yes | Median duration of past runs (`?instance=` or `?app=`) |
 | `GET` | `/api/instances` | Yes | List instances (env/discovery defaults + extras) |
 | `POST` | `/api/instances` | Yes | Add a named extra instance of an app |
 | `PUT`/`DELETE` | `/api/instances/<id>` | Yes | Edit / remove an extra instance |

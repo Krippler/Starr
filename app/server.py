@@ -1545,23 +1545,28 @@ def api_instances_delete(iid):
 @app.route("/api/history")
 @require_api_key
 def api_history():
-    """Recent run records, newest first. Optional ?app= filter and ?limit=."""
+    """Recent run records, newest first. Optional ?instance= (preferred,
+    per-instance) or ?app= filter, and ?limit=."""
+    instance_filter = (request.args.get("instance") or "").strip().lower() or None
     app_filter = (request.args.get("app") or "").strip().lower() or None
     try:
         limit = max(1, min(int(request.args.get("limit", "50")), 500))
     except ValueError:
         limit = 50
-    return jsonify(_history.recent(app=app_filter, limit=limit))
+    return jsonify(_history.recent(app=app_filter, instance=instance_filter, limit=limit))
 
 
 @app.route("/api/history/estimate")
 @require_api_key
 def api_history_estimate():
-    """Median duration of comparable past runs for ?app= (pre-repair hint)."""
+    """Median duration of comparable past runs. Prefers ?instance= for a
+    per-instance estimate; falls back to ?app= for the app-wide median."""
+    instance = (request.args.get("instance") or "").strip().lower()
     app_name = (request.args.get("app") or "").strip().lower()
-    if not app_name:
-        return jsonify({"error": "app is required"}), 400
-    return jsonify(_history.estimate(app_name))
+    if not instance and not app_name:
+        return jsonify({"error": "app or instance is required"}), 400
+    return jsonify(_history.estimate(app=app_name or None,
+                                     instance=instance or None))
 
 
 @app.route("/api/notify")
