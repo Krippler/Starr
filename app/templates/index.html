@@ -547,6 +547,10 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
             <option value="radarr">Radarr</option>
             <option value="lidarr">Lidarr</option>
             <option value="sportarr">Sportarr</option>
+            <option value="readarr">Readarr</option>
+            <option value="prowlarr">Prowlarr</option>
+            <option value="whisparr">Whisparr</option>
+            <option value="bazarr">Bazarr</option>
           </select>
         </div>
       </div>
@@ -639,6 +643,11 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       <div class="field" style="margin-bottom:12px">
         <label>Recipients <span style="color:var(--muted);font-size:9px">one per line — phone number or group id</span></label>
         <textarea id="notifySignalRecipients" rows="2" style="width:100%;resize:vertical;font-family:'JetBrains Mono',monospace;font-size:11px"></textarea>
+      </div>
+      <div style="font-size:10px;color:var(--dry);letter-spacing:.08em;margin:6px 0">WEBHOOKS</div>
+      <div class="field" style="margin-bottom:12px">
+        <label>Webhook URLs <span style="color:var(--muted);font-size:9px">one per line — receives a JSON POST with app/status/elapsed/backup/… on every completed run</span></label>
+        <textarea id="notifyWebhookUrls" rows="2" style="width:100%;resize:vertical;font-family:'JetBrains Mono',monospace;font-size:11px" placeholder="https://example.com/starr-hook"></textarea>
       </div>
       <div class="action-row">
         <button class="btn btn-primary btn-sm" onclick="saveNotify()" id="notifySaveBtn">Save</button>
@@ -1634,6 +1643,7 @@ async function loadNotify() {
     document.getElementById('notifySignalUrl').value        = c.signal?.api_url || '';
     document.getElementById('notifySignalNumber').value     = c.signal?.number || '';
     document.getElementById('notifySignalRecipients').value = (c.signal?.recipients || []).join('\n');
+    document.getElementById('notifyWebhookUrls').value      = (c.webhook_urls || []).join('\n');
   } catch(_){}
 }
 
@@ -1642,6 +1652,7 @@ function _notifyPayload() {
     enabled:      document.getElementById('notifyEnabled').checked,
     level:        document.getElementById('notifyLevel').value,
     apprise_urls: document.getElementById('notifyAppriseUrls').value,
+    webhook_urls: document.getElementById('notifyWebhookUrls').value,
     signal: {
       api_url:    document.getElementById('notifySignalUrl').value.trim(),
       number:     document.getElementById('notifySignalNumber').value.trim(),

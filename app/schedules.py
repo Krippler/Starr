@@ -29,7 +29,8 @@ log = logging.getLogger("starr-repair.schedules")
 
 VALID_OPS = ("integrity", "foreign_keys", "wal_checkpoint",
              "vacuum", "reindex", "analyze")
-VALID_APPS = ("sonarr", "radarr", "lidarr", "sportarr")
+VALID_APPS = ("sonarr", "radarr", "lidarr", "sportarr",
+              "readarr", "prowlarr", "whisparr", "bazarr")
 
 
 def _parse_cron(expr: str) -> CronTrigger:

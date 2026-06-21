@@ -441,7 +441,7 @@ def test_schedule_store_validates(tmp_path):
     from schedules import ScheduleStore
     store = ScheduleStore(tmp_path / ".s.json")
     with pytest.raises(ValueError, match="app"):
-        store.add({"app": "prowlarr", "ops": ["integrity"], "cron": "0 3 * * *"})
+        store.add({"app": "notarealapp", "ops": ["integrity"], "cron": "0 3 * * *"})
     with pytest.raises(ValueError, match="ops"):
         store.add({"app": "sonarr", "ops": ["bad"], "cron": "0 3 * * *"})
     with pytest.raises(ValueError, match="cron"):
@@ -900,3 +900,64 @@ def test_record_history_from_worker(tmp_path, monkeypatch):
     assert last is not None
     assert last["db_bytes"] == 100
     assert last["app"] == "sonarr"
+
+
+# ── Webhook notifications ───────────────────────────────────────────────────────
+def test_notify_config_round_trip_includes_webhook(tmp_path):
+    import notify
+    cfg = notify.NotifyConfig(tmp_path / "n.json")
+    cfg.update({
+        "enabled": True,
+        "level":   "warning",
+        "webhook_urls": "https://a.example/h\nhttps://b.example/h\n",
+    })
+    out = notify.NotifyConfig(tmp_path / "n.json").get()
+    assert out["webhook_urls"] == ["https://a.example/h", "https://b.example/h"]
+
+
+def test_send_webhook_posts_json(monkeypatch):
+    import notify
+    posted = []
+    class FakeResp:
+        def __init__(self, code): self.status_code = code; self.text = ""
+    def fake_post(url, json=None, timeout=None, **kw):
+        posted.append((url, json))
+        return FakeResp(204 if "ok" in url else 500)
+    monkeypatch.setattr(notify.requests, "post", fake_post)
+    sent, errs = notify._send_webhook(
+        ["https://ok.example/h", "https://bad.example/h"], {"event": "x"})
+    assert sent == 1
+    assert any("HTTP 500" in e for e in errs)
+    assert posted[0][1] == {"event": "x"}
+
+
+def test_maybe_notify_includes_structured_payload(monkeypatch, tmp_path):
+    import notify
+    cfg_store = notify.NotifyConfig(tmp_path / "n.json")
+    cfg_store.update({"enabled": True, "level": "always",
+                      "webhook_urls": "https://hook.example/x"})
+    captured = {}
+    def fake_dispatch(cfg, title, body, webhook_payload=None):
+        captured["payload"] = webhook_payload
+        return {"sent": 1, "errors": []}
+    monkeypatch.setattr(notify, "dispatch", fake_dispatch)
+    notify.maybe_notify(cfg_store, "sonarr",
+                        {"status": "ok", "fixed": 6, "errors": 0,
+                         "elapsed": "00:00:42", "backup": "sonarr_1_clean.db"},
+                        scheduled=True, schedule_name="nightly")
+    p = captured["payload"]
+    assert p["event"] == "repair_complete"
+    assert p["app"] == "sonarr"
+    assert p["status"] == "ok"
+    assert p["schedule_name"] == "nightly"
+    assert p["scheduled"] is True
+
+
+# ── Schedule store accepts the newer *arr apps ─────────────────────────────────
+def test_schedule_store_accepts_new_apps(tmp_path):
+    from schedules import ScheduleStore
+    s = ScheduleStore(tmp_path / "sch.json")
+    for app_name in ("readarr", "prowlarr", "whisparr", "bazarr"):
+        sched = s.add({"name": f"{app_name} test", "app": app_name,
+                       "ops": ["integrity"], "cron": "0 3 * * *"})
+        assert sched["app"] == app_name

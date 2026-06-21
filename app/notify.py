@@ -9,6 +9,10 @@ Two delivery paths, both optional:
      (https://github.com/bbernhard/signal-cli-rest-api) via its
      POST /v2/send endpoint. Kept as a first-class path (rather than via
      Apprise's signal:// plugin) so the exact REST contract is explicit.
+  3. Webhook — POSTs the full machine-readable result (app, status,
+     fixed, errors, elapsed, backup, scheduled, schedule_name, …) as
+     JSON to one or more URLs. For wiring Starr into home automation,
+     dashboards, or another tool's intake.
 
 Config is persisted as JSON next to the schedules file in BACKUP_DIR and
 is editable through the dashboard. The whole subsystem is opt-in: with no
@@ -98,10 +102,11 @@ class NotifyConfig:
     @staticmethod
     def _defaults() -> dict:
         return {
-            "enabled":     False,
-            "level":       "error",
+            "enabled":      False,
+            "level":        "error",
             "apprise_urls": [],
-            "signal":      {"api_url": "", "number": "", "recipients": []},
+            "signal":       {"api_url": "", "number": "", "recipients": []},
+            "webhook_urls": [],
         }
 
     def load(self) -> None:
@@ -146,6 +151,11 @@ class NotifyConfig:
                 if isinstance(urls, str):
                     urls = [u.strip() for u in urls.splitlines()]
                 cur["apprise_urls"] = [u.strip() for u in (urls or []) if u.strip()]
+            if "webhook_urls" in payload:
+                wh = payload["webhook_urls"]
+                if isinstance(wh, str):
+                    wh = [u.strip() for u in wh.splitlines()]
+                cur["webhook_urls"] = [u.strip() for u in (wh or []) if u.strip()]
             if "signal" in payload and isinstance(payload["signal"], dict):
                 sig = payload["signal"]
                 recips = sig.get("recipients", cur["signal"]["recipients"])
@@ -203,7 +213,25 @@ def _send_signal(sig: dict, message: str) -> tuple[int, list[str]]:
         return 0, [f"signal send failed: {e}"]
 
 
-def dispatch(config: dict, title: str, body: str) -> dict:
+def _send_webhook(urls: list[str], payload: dict) -> tuple[int, list[str]]:
+    """POST a JSON payload to each configured URL. Returns (count_sent, errors)."""
+    if not urls:
+        return 0, []
+    sent, errors = 0, []
+    for url in urls:
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+            if 200 <= r.status_code < 300:
+                sent += 1
+            else:
+                errors.append(f"webhook {url} HTTP {r.status_code}")
+        except requests.RequestException as e:
+            errors.append(f"webhook {url} failed: {e}")
+    return sent, errors
+
+
+def dispatch(config: dict, title: str, body: str,
+             webhook_payload: dict | None = None) -> dict:
     """Send a notification through every configured channel. Never raises.
     Returns a summary dict (sent count + errors) for the /test endpoint."""
     sent, errors = 0, []
@@ -223,6 +251,15 @@ def dispatch(config: dict, title: str, body: str) -> dict:
         errors += errs
     except BaseException as e:        # noqa: BLE001
         errors.append(f"signal error: {e}")
+    try:
+        # Webhooks get a structured JSON payload (or, for the test endpoint,
+        # a synthetic one) — useful for integrating with home automation, etc.
+        wh_payload = webhook_payload or {"event": "test", "title": title, "body": body}
+        n, errs = _send_webhook(config.get("webhook_urls") or [], wh_payload)
+        sent += n
+        errors += errs
+    except BaseException as e:        # noqa: BLE001
+        errors.append(f"webhook error: {e}")
     return {"sent": sent, "errors": errors}
 
 
@@ -243,7 +280,21 @@ def maybe_notify(config_store: "NotifyConfig", app: str, result: dict, *,
             return
         title, body = format_message(app, result, scheduled=scheduled,
                                      schedule_name=schedule_name)
-        summary = dispatch(cfg, title, body)
+        webhook_payload = {
+            "event":         "repair_complete",
+            "app":           app,
+            "status":        status,
+            "fixed":         result.get("fixed"),
+            "errors":        result.get("errors"),
+            "elapsed":       result.get("elapsed"),
+            "backup":        result.get("backup"),
+            "message":       result.get("message"),
+            "scheduled":     scheduled,
+            "schedule_name": schedule_name,
+            "title":         title,
+            "body":          body,
+        }
+        summary = dispatch(cfg, title, body, webhook_payload=webhook_payload)
         if summary["errors"]:
             log.warning("Notification errors: %s", summary["errors"])
         else:
