@@ -1120,3 +1120,58 @@ def test_backup_filename_uses_label(monkeypatch, tmp_path):
     out = srv._step_backup({"app": "sonarr", "label": "sonarr-4k"}, str(db))
     assert out is not None
     assert os.path.basename(out).startswith("sonarr-4k_")
+
+
+# ── Instance-scoped history & trends ────────────────────────────────────────────
+def test_history_recent_by_instance(tmp_path):
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json")
+    h.record({"app": "sonarr", "instance": "sonarr",    "status": "ok", "duration_s": 10})
+    h.record({"app": "sonarr", "instance": "sonarr-4k", "status": "ok", "duration_s": 20})
+    h.record({"app": "sonarr", "instance": "sonarr-4k", "status": "ok", "duration_s": 30})
+    # Per-instance — only the matching id
+    four_k = h.recent(instance="sonarr-4k")
+    assert [e["duration_s"] for e in four_k] == [30, 20]
+    # Per-app — still returns every sonarr record
+    assert len(h.recent(app="sonarr")) == 3
+
+
+def test_history_recent_legacy_records_map_to_default(tmp_path):
+    """Pre-multi-instance records have no `instance` field. Filtering by the
+    bare app name as an instance must still surface them (legacy fallback)."""
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json")
+    h.record({"app": "sonarr", "status": "ok", "duration_s": 5})   # legacy
+    h.record({"app": "sonarr", "instance": "sonarr-4k", "status": "ok", "duration_s": 6})
+    legacy = h.recent(instance="sonarr")
+    assert len(legacy) == 1 and legacy[0]["duration_s"] == 5
+
+
+def test_history_estimate_per_instance(tmp_path):
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json")
+    for d in (10, 20, 30):
+        h.record({"app": "sonarr", "instance": "sonarr-4k", "status": "ok", "duration_s": d})
+    h.record({"app": "sonarr", "instance": "sonarr-anime", "status": "ok", "duration_s": 999})
+    est = h.estimate(instance="sonarr-4k")
+    assert est["samples"] == 3 and est["seconds"] == 20
+    assert est["instance"] == "sonarr-4k"
+    # No instance filter → app-wide median (still includes the 999)
+    app_est = h.estimate(app="sonarr")
+    assert app_est["samples"] == 4
+
+
+def test_history_endpoints_instance_filter(client, tmp_path):
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json")
+    h.record({"app": "sonarr", "instance": "sonarr",    "status": "ok", "duration_s": 10})
+    h.record({"app": "sonarr", "instance": "sonarr-4k", "status": "ok", "duration_s": 22})
+    srv._history = h
+    # Instance-scoped /api/history
+    body = json.loads(client.get("/api/history?instance=sonarr-4k").data)
+    assert len(body) == 1 and body[0]["duration_s"] == 22
+    # Instance-scoped /api/history/estimate
+    est = json.loads(client.get("/api/history/estimate?instance=sonarr-4k").data)
+    assert est["seconds"] == 22 and est["instance"] == "sonarr-4k"
+    # Neither app nor instance → 400
+    assert client.get("/api/history/estimate").status_code == 400

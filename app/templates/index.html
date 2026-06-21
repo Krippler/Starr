@@ -1234,17 +1234,30 @@ function fmtAgo(ts) {
   if (diff < 129600) return Math.round(diff / 3600) + 'h ago';
   return Math.round(diff / 86400) + 'd ago';
 }
+// Build the history query string for the active app/instance. Named extras
+// scope to ?instance= (so a second Sonarr has its own pill/charts); the
+// env/discovery default falls back to ?app= so pre-multi-instance records
+// still surface in the default instance's view.
+function historyQS(extra) {
+  const inst = currentInstance();
+  const params = inst && !inst.default
+    ? `instance=${encodeURIComponent(inst.id)}`
+    : `app=${encodeURIComponent(currentApp)}`;
+  return extra ? `${params}&${extra}` : params;
+}
 async function refreshRunMeta() {
   const el = document.getElementById('runMeta');
   if (!el || !getWebKey()) { if (el) el.innerHTML = ''; return; }
   const appAtRequest = currentApp;
+  const instAtRequest = currentInstanceId;
   try {
     const [hRes, eRes] = await Promise.all([
-      fetch(`/api/history?app=${currentApp}&limit=1`, { headers: authHeaders() }),
-      fetch(`/api/history/estimate?app=${currentApp}`, { headers: authHeaders() }),
+      fetch(`/api/history?${historyQS('limit=1')}`, { headers: authHeaders() }),
+      fetch(`/api/history/estimate?${historyQS()}`, { headers: authHeaders() }),
     ]);
     if (hRes.status === 401) { handle401(); return; }
-    if (appAtRequest !== currentApp) return;   // user switched while in-flight
+    // Drop the response if the user switched app or instance mid-flight.
+    if (appAtRequest !== currentApp || instAtRequest !== currentInstanceId) return;
     const hist = hRes.ok ? await hRes.json() : [];
     const est  = eRes.ok ? await eRes.json() : {};
     const parts = [];
@@ -1292,10 +1305,11 @@ async function renderTrends() {
   const meta  = document.getElementById('trendsMeta');
   if (!panel || !getWebKey()) return;
   const appAtRequest = currentApp;
+  const instAtRequest = currentInstanceId;
   try {
-    const res = await fetch(`/api/history?app=${currentApp}&limit=30`, { headers: authHeaders() });
+    const res = await fetch(`/api/history?${historyQS('limit=30')}`, { headers: authHeaders() });
     if (res.status === 401) { handle401(); return; }
-    if (appAtRequest !== currentApp) return;
+    if (appAtRequest !== currentApp || instAtRequest !== currentInstanceId) return;
     const hist = res.ok ? await res.json() : [];
     if (!hist.length) {
       panel.innerHTML = '<div class="empty-state">No run history yet for this app.</div>';
@@ -1325,7 +1339,11 @@ async function renderTrends() {
     }
     panel.innerHTML = cards.length ? `<div class="trend-grid">${cards.join('')}</div>`
                                    : '<div class="empty-state">No measurable runs yet for this app.</div>';
-    if (meta) meta.textContent = `${APPS[currentApp].name} · last ${hist.length} run${hist.length!==1?'s':''}`;
+    if (meta) {
+      const inst = currentInstance();
+      const scope = (inst && !inst.default) ? `${APPS[currentApp].name} › ${inst.name}` : APPS[currentApp].name;
+      meta.textContent = `${scope} · last ${hist.length} run${hist.length!==1?'s':''}`;
+    }
   } catch (_) {
     panel.innerHTML = '<div class="empty-state">Could not load trends.</div>';
   }
