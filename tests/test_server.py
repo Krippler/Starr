@@ -698,3 +698,59 @@ def test_get_status_versionless_for_bazarr(monkeypatch):
     monkeypatch.setattr(srv.requests, "get", fake_get)
     srv._get_status("h", 6767, "k", api="")
     assert seen["url"].endswith("/api/system/status")     # no /v3 or /v1 segment
+
+
+# ── Backup compression / flagging / bulk delete ───────────────────────────────
+def test_backup_compress_roundtrip(tmp_path):
+    import zstandard as zstd
+    src = tmp_path / "src.db"
+    payload = b"SQLite format 3\x00" + b"x" * 5000
+    src.write_bytes(payload)
+    dest = tmp_path / "out.db.zst"
+    srv._compress_file(str(src), str(dest))
+    assert dest.exists() and dest.stat().st_size < src.stat().st_size
+    dctx = zstd.ZstdDecompressor()
+    with open(dest, "rb") as f:
+        assert dctx.stream_reader(f).read() == payload
+
+
+def test_flag_backup_clean_vs_repaired(tmp_path):
+    clean = tmp_path / "sonarr_20250101_000000.db.zst"
+    clean.write_bytes(b"x")
+    out = srv._flag_backup(str(clean), {"integrity": ("ok", 0)})
+    assert out.endswith("_clean.db.zst") and os.path.exists(out)
+
+    rep = tmp_path / "radarr_20250101_000000.db"
+    rep.write_bytes(b"x")
+    out2 = srv._flag_backup(str(rep), {"integrity": ("issues", 3), "reindex": ("ok", 0)})
+    assert out2.endswith("_repaired.db") and os.path.exists(out2)
+
+
+def test_backups_list_includes_compressed_and_result(client, tmp_path):
+    bdir = tmp_path / "backups"
+    (bdir / "sonarr_20250101_000000_clean.db.zst").write_bytes(b"x")
+    (bdir / "radarr_20250101_000000_repaired.db").write_bytes(b"y")
+    srv.app.config["BACKUP_DIR"] = bdir
+    body = json.loads(client.get("/api/backups").data)
+    by = {b["name"]: b for b in body}
+    s = by["sonarr_20250101_000000_clean.db.zst"]
+    assert s["compressed"] is True and s["result"] == "clean"
+    r = by["radarr_20250101_000000_repaired.db"]
+    assert r["compressed"] is False and r["result"] == "repaired"
+
+
+def test_delete_accepts_zst_and_bulk(client, tmp_path):
+    bdir = tmp_path / "backups"
+    a = bdir / "sonarr_1_clean.db.zst"; a.write_bytes(b"x")
+    b = bdir / "sonarr_2_clean.db.zst"; b.write_bytes(b"x")
+    srv.app.config["BACKUP_DIR"] = bdir
+    # single delete of a .zst
+    assert client.delete("/api/backups/sonarr_1_clean.db.zst").status_code == 200
+    assert not a.exists()
+    # bulk delete
+    r = client.post("/api/backups/delete", data=json.dumps({"names": ["sonarr_2_clean.db.zst", "../evil"]}),
+                    content_type="application/json")
+    out = json.loads(r.data)
+    assert out["deleted"] == ["sonarr_2_clean.db.zst"]
+    assert "../evil" in out["errors"]
+    assert not b.exists()

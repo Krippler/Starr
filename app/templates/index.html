@@ -221,6 +221,7 @@ header {
 .backup-table td { padding: 8px 10px; border-bottom: 1px solid var(--border); color: var(--text); }
 .backup-table tr:last-child td { border-bottom: none; }
 .backup-table tr:hover td { background: rgba(255,255,255,.02); }
+.bk-tag { font-size: 8px; letter-spacing: .08em; text-transform: uppercase; padding: 1px 5px; border-radius: 3px; background: rgba(255,255,255,.06); }
 .empty-state { text-align: center; padding: 24px; color: var(--muted); font-size: 12px; }
 .btn {
   font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: .07em;
@@ -1339,11 +1340,41 @@ async function loadBackups() {
     if (res.status===401) { panel.innerHTML='<div class="empty-state" style="color:var(--err)">Unauthorized — enter your Web Key above.</div>'; return; }
     const data=await res.json();
     if (!data.length) { panel.innerHTML='<div class="empty-state">No backups yet. Run a repair to create one.</div>'; return; }
-    panel.innerHTML=`<table class="backup-table"><thead><tr><th>File</th><th>Size</th><th>Created</th><th style="text-align:right">Actions</th></tr></thead><tbody>`+
-      data.map(b=>`<tr><td>${escHtml(b.name)}</td><td>${b.size_mb} MB</td><td>${new Date(b.created).toLocaleString()}</td>`+
+    const badge = b => {
+      const tags = [];
+      if (b.result === 'clean')    tags.push('<span class="bk-tag" style="color:var(--ok)">clean</span>');
+      if (b.result === 'repaired') tags.push('<span class="bk-tag" style="color:var(--warn)">repaired</span>');
+      if (b.compressed)            tags.push('<span class="bk-tag" style="color:var(--dry)">zst</span>');
+      return tags.join(' ');
+    };
+    panel.innerHTML=
+      `<table class="backup-table"><thead><tr>`+
+      `<th style="width:24px"><input type="checkbox" id="bkAll" onchange="toggleAllBackups(this.checked)"></th>`+
+      `<th>File</th><th>Size</th><th>Created</th><th style="text-align:right">Actions</th></tr></thead><tbody>`+
+      data.map(b=>`<tr>`+
+        `<td><input type="checkbox" class="bk-cb" value="${escAttr(b.name)}"></td>`+
+        `<td>${escHtml(b.name)} ${badge(b)}</td>`+
+        `<td>${b.size_mb} MB</td><td>${new Date(b.created).toLocaleString()}</td>`+
         `<td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="deleteBackup('${escAttr(b.name)}')">Delete</button></td></tr>`).join('')+
-      `</tbody></table>`;
+      `</tbody></table>`+
+      `<div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="deleteSelectedBackups()">Delete selected</button></div>`;
   } catch(e) { panel.innerHTML='<div class="empty-state" style="color:var(--err)">Failed to load backups.</div>'; }
+}
+
+function toggleAllBackups(on) {
+  document.querySelectorAll('.bk-cb').forEach(cb => { cb.checked = on; });
+}
+
+async function deleteSelectedBackups() {
+  const names = [...document.querySelectorAll('.bk-cb:checked')].map(cb => cb.value);
+  if (!names.length) { logLine('WARN','No backups selected.','warn'); return; }
+  if (!confirm(`Delete ${names.length} selected backup(s)? This cannot be undone.`)) return;
+  const res = await fetch('/api/backups/delete', { method:'POST', headers: authHeaders(), body: JSON.stringify({names}) });
+  if (res.status === 401) { handle401(); return; }
+  const d = await res.json().catch(()=>({}));
+  logLine('SYS', `Deleted ${ (d.deleted||[]).length } backup(s).`, 'sys');
+  if (d.errors && Object.keys(d.errors).length) logLine('WARN', `Some failed: ${Object.keys(d.errors).join(', ')}`, 'warn');
+  loadBackups();
 }
 
 async function deleteBackup(name) {
