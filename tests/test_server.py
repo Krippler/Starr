@@ -754,3 +754,57 @@ def test_delete_accepts_zst_and_bulk(client, tmp_path):
     assert out["deleted"] == ["sonarr_2_clean.db.zst"]
     assert "../evil" in out["errors"]
     assert not b.exists()
+
+
+# ── Restore ───────────────────────────────────────────────────────────────────
+def test_step_restore_decompresses_and_clears_sidecars(tmp_path, monkeypatch):
+    srv._job.reset()
+    srv.app.config["BACKUP_DIR"] = tmp_path / "bk"
+    # Live DB + stale WAL/SHM sidecars that must be removed on restore.
+    db = tmp_path / "sonarr.db"
+    db.write_bytes(b"OLD-DB-CONTENT")
+    (tmp_path / "sonarr.db-wal").write_bytes(b"stale-wal")
+    (tmp_path / "sonarr.db-shm").write_bytes(b"stale-shm")
+    # Compressed backup with new content.
+    payload = b"SQLite format 3\x00NEW" + b"z" * 2000
+    plain = tmp_path / "new.db"; plain.write_bytes(payload)
+    bkp = tmp_path / "sonarr_20250101_000000_clean.db.zst"
+    srv._compress_file(str(plain), str(bkp))
+
+    ok = srv._step_restore({"app": "sonarr"}, str(db), str(bkp))
+    assert ok is True
+    assert db.read_bytes() == payload                 # restored content
+    assert not (tmp_path / "sonarr.db-wal").exists()  # sidecars cleared
+    assert not (tmp_path / "sonarr.db-shm").exists()
+    # A pre-restore snapshot was written.
+    assert any(p.name.endswith("_pre-restore.db.zst") for p in (tmp_path / "bk").iterdir())
+
+
+def test_restore_endpoint_validation(client, tmp_path):
+    bdir = tmp_path / "backups"
+    srv.app.config["BACKUP_DIR"] = bdir
+    # invalid name
+    assert client.post("/api/backups/..%2fx/restore").status_code in (400, 404)
+    # unknown app prefix
+    f = bdir / "prowlerz_1.db"; f.write_bytes(b"x")
+    r = client.post("/api/backups/prowlerz_1.db/restore")
+    assert r.status_code in (400, 404)
+
+
+def test_restore_endpoint_starts_job(client, tmp_path, monkeypatch):
+    bdir = tmp_path / "backups"; ddir = tmp_path / "data"
+    srv.app.config["BACKUP_DIR"] = bdir
+    srv.app.config["APPDATA_DIR"] = ddir
+    # backup + a target DB so _resolve_db_path finds it
+    (bdir / "sonarr_1_clean.db").write_bytes(b"x")
+    (ddir / "sonarr").mkdir(parents=True)
+    (ddir / "sonarr" / "sonarr.db").write_bytes(b"old")
+    srv.app.config["SONARR_APIKEY"] = "k"   # gives a "way to stop" path
+    # Don't actually run the worker thread's docker calls.
+    monkeypatch.setattr(srv, "_restore_worker", lambda cfg: None)
+    try:
+        r = client.post("/api/backups/sonarr_1_clean.db/restore")
+        assert r.status_code == 202
+        assert json.loads(r.data)["app"] == "sonarr"
+    finally:
+        srv.app.config["SONARR_APIKEY"] = ""

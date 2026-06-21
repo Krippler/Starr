@@ -1355,7 +1355,9 @@ async function loadBackups() {
         `<td><input type="checkbox" class="bk-cb" value="${escAttr(b.name)}"></td>`+
         `<td>${escHtml(b.name)} ${badge(b)}</td>`+
         `<td>${b.size_mb} MB</td><td>${new Date(b.created).toLocaleString()}</td>`+
-        `<td style="text-align:right"><button class="btn btn-ghost btn-sm" onclick="deleteBackup('${escAttr(b.name)}')">Delete</button></td></tr>`).join('')+
+        `<td style="text-align:right">`+
+          `<button class="btn btn-ghost btn-sm" onclick="restoreBackup('${escAttr(b.name)}')">Restore</button> `+
+          `<button class="btn btn-ghost btn-sm" onclick="deleteBackup('${escAttr(b.name)}')">Delete</button></td></tr>`).join('')+
       `</tbody></table>`+
       `<div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="deleteSelectedBackups()">Delete selected</button></div>`;
   } catch(e) { panel.innerHTML='<div class="empty-state" style="color:var(--err)">Failed to load backups.</div>'; }
@@ -1387,6 +1389,24 @@ async function deleteBackup(name) {
   } else {
     const e = await res.json().catch(()=>({error:'failed'}));
     logLine('ERR', `Could not delete backup: ${e.error || res.status}`, 'err');
+  }
+}
+
+async function restoreBackup(name) {
+  const app = name.split('_')[0];
+  if (!confirm(
+      `Restore "${name}" into ${app}?\n\n` +
+      `This STOPS the ${app} container, OVERWRITES its current database with ` +
+      `this backup, then starts it again. A pre-restore snapshot of the ` +
+      `current database is saved first, so this can be undone.\n\nProceed?`)) return;
+  const res = await fetch(`/api/backups/${encodeURIComponent(name)}/restore`, { method:'POST', headers: authHeaders() });
+  if (res.status === 401) { handle401(); return; }
+  if (res.ok) {
+    logLine('SYS', `Restore started for ${app} from ${name} — streaming below.`, 'sys');
+    // The restore runs as a job; SSE will light up the log + phases.
+  } else {
+    const e = await res.json().catch(()=>({error:'failed'}));
+    logLine('ERR', `Restore failed to start: ${e.error || res.status}`, 'err');
   }
 }
 
