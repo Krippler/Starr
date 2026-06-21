@@ -71,6 +71,8 @@ class Config:
     PROWLARR_URL        = os.environ.get("PROWLARR_URL", "")
     WHISPARR_APIKEY     = os.environ.get("WHISPARR_APIKEY", "")
     WHISPARR_URL        = os.environ.get("WHISPARR_URL", "")
+    BAZARR_APIKEY       = os.environ.get("BAZARR_APIKEY", "")
+    BAZARR_URL          = os.environ.get("BAZARR_URL", "")
 
 app.config.from_object(Config)
 logging.getLogger().setLevel(app.config["LOG_LEVEL"])
@@ -88,6 +90,9 @@ APP_DEFAULTS = {
     "readarr":  {"port": 8787, "dbname": "readarr.db",  "api": "v1"},
     "prowlarr": {"port": 9696, "dbname": "prowlarr.db", "api": "v1"},
     "whisparr": {"port": 6969, "dbname": "whisparr.db", "api": "v3"},
+    # Bazarr is the odd one out: versionless API (/api/...) and its DB lives at
+    # /config/db/bazarr.db rather than /config/bazarr.db.
+    "bazarr":   {"port": 6767, "dbname": "db/bazarr.db", "api": ""},
 }
 
 # After the app first reads offline, re-poll this many times at this interval
@@ -220,10 +225,21 @@ def _base_url_from_parts(host, port, urlbase="") -> str:
     return f"http://{host}:{port}{ub}"
 
 
+def _api_path(api: str, endpoint: str) -> str:
+    """Build the API path for an endpoint. Most *arr apps version their API
+    (/api/v3/... , /api/v1/...); Bazarr is versionless (/api/...). An empty
+    `api` selects the versionless form."""
+    return f"/api/{api}/{endpoint}" if api else f"/api/{endpoint}"
+
+
 def _get_status(host, port, apikey, urlbase="", timeout=5, api="v3"):
     try:
-        url = f"{_base_url_from_parts(host, port, urlbase)}/api/{api}/system/status"
-        r = requests.get(url, headers={"X-Api-Key": apikey}, timeout=timeout)
+        url = _base_url_from_parts(host, port, urlbase) + _api_path(api, "system/status")
+        # Send the apikey both as a header (Sonarr-style; case-insensitive so
+        # Bazarr's X-API-KEY matches) and as a query param (Bazarr also accepts
+        # ?apikey=) for maximum compatibility.
+        r = requests.get(url, headers={"X-Api-Key": apikey},
+                         params={"apikey": apikey}, timeout=timeout)
         return r.json() if r.status_code == 200 else None
     except Exception:
         return None
@@ -231,8 +247,9 @@ def _get_status(host, port, apikey, urlbase="", timeout=5, api="v3"):
 
 def _shutdown_app(host, port, apikey, urlbase="", api="v3"):
     try:
-        url = f"{_base_url_from_parts(host, port, urlbase)}/api/{api}/system/shutdown"
-        r = requests.post(url, headers={"X-Api-Key": apikey}, timeout=10)
+        url = _base_url_from_parts(host, port, urlbase) + _api_path(api, "system/shutdown")
+        r = requests.post(url, headers={"X-Api-Key": apikey},
+                          params={"apikey": apikey}, timeout=10)
         r.raise_for_status()
     except requests.RequestException as e:
         log.warning("Shutdown request failed: %s", e)
@@ -291,7 +308,12 @@ def _step_preflight(cfg) -> str | None:
         emit("ERR", "Check host / port / apikey settings.", "err")
         return None
 
-    emit("OK",   f"Connected – {cfg['app'].capitalize()} v{st.get('version','?')} on {st.get('osName','?')}", "ok")
+    # Bazarr nests its status under "data" and uses different key names, so
+    # fall back gracefully when the usual Sonarr-style fields are absent.
+    sd = st.get("data", st) if isinstance(st, dict) else {}
+    version = sd.get("version") or sd.get("bazarr_version") or st.get("version", "?")
+    osname  = sd.get("osName") or sd.get("operating_system") or st.get("osName", "?")
+    emit("OK",   f"Connected – {cfg['app'].capitalize()} v{version} on {osname}", "ok")
     app_data = st.get("appData", "")
     emit("INFO", f"App data dir: {app_data or '(unknown)'}", "info")
 

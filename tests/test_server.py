@@ -393,7 +393,7 @@ def test_get_status_uses_api_version(monkeypatch):
     class FakeResp:
         status_code = 200
         def json(self): return {"version": "x"}
-    def fake_get(url, headers=None, timeout=None):
+    def fake_get(url, headers=None, params=None, timeout=None):
         seen["url"] = url
         return FakeResp()
     monkeypatch.setattr(srv.requests, "get", fake_get)
@@ -672,3 +672,29 @@ def test_api_notify_get_and_update(client):
                    content_type="application/json")
     assert r.status_code == 200
     assert json.loads(r.data)["level"] == "always"
+
+
+# ── Bazarr (versionless API + db subpath) ─────────────────────────────────────
+def test_bazarr_registered_versionless():
+    assert srv.APP_DEFAULTS["bazarr"]["api"] == ""
+    assert srv.APP_DEFAULTS["bazarr"]["port"] == 6767
+    assert srv.APP_DEFAULTS["bazarr"]["dbname"] == "db/bazarr.db"
+
+
+def test_api_path_versionless_vs_versioned():
+    assert srv._api_path("v3", "system/status") == "/api/v3/system/status"
+    assert srv._api_path("v1", "system/shutdown") == "/api/v1/system/shutdown"
+    assert srv._api_path("", "system/status") == "/api/system/status"
+
+
+def test_get_status_versionless_for_bazarr(monkeypatch):
+    seen = {}
+    class FakeResp:
+        status_code = 200
+        def json(self): return {"data": {"bazarr_version": "1.4"}}
+    def fake_get(url, headers=None, params=None, timeout=None):
+        seen["url"] = url
+        return FakeResp()
+    monkeypatch.setattr(srv.requests, "get", fake_get)
+    srv._get_status("h", 6767, "k", api="")
+    assert seen["url"].endswith("/api/system/status")     # no /v3 or /v1 segment

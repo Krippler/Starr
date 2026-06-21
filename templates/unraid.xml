@@ -96,6 +96,9 @@
   <Config Name="WHISPARR_APIKEY" Target="WHISPARR_APIKEY" Default="" Mode=""
           Description="Whisparr API key. Leave blank to disable."
           Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="BAZARR_APIKEY" Target="BAZARR_APIKEY" Default="" Mode=""
+          Description="Bazarr API key (Settings - General - Security). Leave blank to disable."
+          Type="Variable" Display="always" Required="false" Mask="true"/>
 
   <!-- ── Optional URL overrides (rarely needed) ─────────────────────────── -->
   <!-- These let you override the URL auto-discovery for any app — e.g. you
@@ -121,6 +124,9 @@
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="WHISPARR_URL" Target="WHISPARR_URL" Default="" Mode=""
           Description="Optional. Override the discovered Whisparr URL."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="BAZARR_URL" Target="BAZARR_URL" Default="" Mode=""
+          Description="Optional. Override the discovered Bazarr URL."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
 </Container>
