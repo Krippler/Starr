@@ -1501,6 +1501,7 @@ async function loadBackups() {
       const tags = [];
       if (b.result === 'clean')    tags.push('<span class="bk-tag" style="color:var(--ok)">clean</span>');
       if (b.result === 'repaired') tags.push('<span class="bk-tag" style="color:var(--warn)">repaired</span>');
+      if (b.result === 'aborted')  tags.push('<span class="bk-tag" style="color:var(--muted)">aborted</span>');
       if (b.compressed)            tags.push('<span class="bk-tag" style="color:var(--dry)">zst</span>');
       return tags.join(' ');
     };

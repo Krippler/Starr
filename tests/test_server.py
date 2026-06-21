@@ -961,3 +961,67 @@ def test_schedule_store_accepts_new_apps(tmp_path):
         sched = s.add({"name": f"{app_name} test", "app": app_name,
                        "ops": ["integrity"], "cron": "0 3 * * *"})
         assert sched["app"] == app_name
+
+
+# ── Cancel mid-operation (interrupt) ────────────────────────────────────────────
+def test_stop_interrupts_active_connection(client):
+    class FakeConn:
+        def __init__(self): self.interrupted = False
+        def interrupt(self): self.interrupted = True
+    fake = FakeConn()
+    srv._job.running = True
+    srv._job.aborted = False
+    srv._job.active_conn = fake
+    try:
+        r = client.post("/api/repair/stop")
+        assert r.status_code == 200
+        body = json.loads(r.data)
+        assert body["interrupted"] is True
+        assert fake.interrupted is True
+        assert srv._job.aborted is True
+    finally:
+        srv._job.running = False
+        srv._job.active_conn = None
+
+
+def test_stop_without_active_connection(client):
+    srv._job.running = True
+    srv._job.aborted = False
+    srv._job.active_conn = None
+    try:
+        r = client.post("/api/repair/stop")
+        assert r.status_code == 200
+        assert json.loads(r.data)["interrupted"] is False
+        assert srv._job.aborted is True
+    finally:
+        srv._job.running = False
+
+
+def test_step_repair_marks_op_aborted_on_interrupt(monkeypatch, tmp_path):
+    db = tmp_path / "t.db"
+    real_connect = srv.sqlite3.connect
+    c = real_connect(str(db)); c.execute("CREATE TABLE x(i)"); c.commit(); c.close()
+
+    class Wrap:
+        def __init__(self, inner): self._inner = inner
+        def execute(self, sql, *a):
+            if sql.strip().upper().startswith("VACUUM"):
+                srv._job.aborted = True                       # simulate stop arriving
+                raise srv.sqlite3.OperationalError("interrupted")
+            return self._inner.execute(sql, *a)
+        def __getattr__(self, n): return getattr(self._inner, n)
+
+    monkeypatch.setattr(srv.sqlite3, "connect",
+                        lambda *a, **k: Wrap(real_connect(*a, **k)))
+    srv._job.reset()
+    res = srv._step_repair({"ops": ["vacuum"], "app": "sonarr"}, str(db))
+    assert res["vacuum"][0] == "aborted"
+    assert srv._job.active_conn is None   # cleared after the run
+
+
+def test_flag_backup_marks_aborted(tmp_path):
+    p = tmp_path / "sonarr_20260101_000000.db"
+    p.write_bytes(b"x")
+    out = srv._flag_backup(str(p), {"integrity": ("ok", 0), "vacuum": ("aborted", 0)})
+    assert out.endswith("_aborted.db")
+    assert os.path.exists(out)

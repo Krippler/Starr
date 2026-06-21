@@ -164,6 +164,11 @@ class JobState:
         self.start_time  = None
         self.history     = []          # list of log entry dicts
         self.result      = None        # populated on completion
+        # The SQLite connection of the in-flight repair, if any. Held so the
+        # stop endpoint can call .interrupt() from another thread to abort a
+        # long-running VACUUM / REINDEX mid-statement (a plain aborted flag
+        # only takes effect between ops). Set/cleared by _step_repair.
+        self.active_conn = None
 
 _job = JobState()
 
@@ -507,14 +512,18 @@ def _flag_backup(backup_path: str | None, results: dict) -> str | None:
     """After repair, rename the backup to record the outcome:
       …_clean.db[.zst]    no issues found
       …_repaired.db[.zst] issues were found/fixed
+      …_aborted.db[.zst]  cancelled mid-run (kept — it predates any changes)
     Returns the new path (or the original if no rename happened)."""
     if not backup_path:
         return backup_path
     p = Path(backup_path)
     if not p.exists():
         return backup_path
-    issues = sum(1 for s, _ in results.values() if s in ("issues", "fixed", "error"))
-    flag = "repaired" if issues else "clean"
+    if any(s == "aborted" for s, _ in results.values()):
+        flag = "aborted"
+    else:
+        issues = sum(1 for s, _ in results.values() if s in ("issues", "fixed", "error"))
+        flag = "repaired" if issues else "clean"
     # Insert the flag before the .db/.db.zst suffix.
     name = p.name
     for suf in (".db.zst", ".db"):
@@ -544,6 +553,12 @@ def _step_repair(cfg, db_path: str) -> dict:
         con.execute("PRAGMA journal_mode=WAL")
     except sqlite3.Error as e:
         emit("ERR", f"Cannot open DB: {e}", "err"); return results
+
+    # Publish the connection so api_stop can interrupt() a long op mid-flight.
+    _job.active_conn = con
+    # An interrupt may have arrived between shutdown and opening the DB.
+    if _job.aborted:
+        con.interrupt()
 
     for op in ops:
         if _job.aborted:
@@ -609,9 +624,21 @@ def _step_repair(cfg, db_path: str) -> dict:
                 results[op] = ("skipped", 0)
 
         except sqlite3.Error as e:
+            # interrupt() surfaces here as OperationalError("interrupted").
+            # Treat any error during an abort as a clean cancellation, not a
+            # repair failure.
+            if _job.aborted:
+                emit("WARN", f"{op.upper()} interrupted by user.", "warn")
+                results[op] = ("aborted", 0)
+                break
             emit("ERR", f"{op} failed: {e}", "err")
             results[op] = ("error", str(e))
 
+    _job.active_conn = None
+    try:
+        con.rollback()   # undo any partial work from an interrupted statement
+    except sqlite3.Error:
+        pass
     con.close()
     return results
 
@@ -1193,8 +1220,22 @@ def api_stop():
     if not _job.running:
         return jsonify({"error": "No job running."}), 409
     _job.aborted = True
-    emit("WARN", "Stop requested by user – aborting after current step.", "warn")
-    return jsonify({"status": "aborting"}), 200
+    # Interrupt any in-flight SQLite statement (e.g. a long VACUUM/REINDEX)
+    # so the abort takes effect immediately rather than after the op finishes.
+    # Connection.interrupt() is safe to call from this request thread.
+    con = _job.active_conn
+    interrupted = False
+    if con is not None:
+        try:
+            con.interrupt()
+            interrupted = True
+        except Exception:
+            log.exception("Failed to interrupt active DB connection")
+    msg = ("Stop requested – interrupting the running database operation."
+           if interrupted else
+           "Stop requested by user – aborting after current step.")
+    emit("WARN", msg, "warn")
+    return jsonify({"status": "aborting", "interrupted": interrupted}), 200
 
 
 @app.route("/api/repair/status")
@@ -1265,7 +1306,8 @@ def api_backups():
                 "created":    datetime.fromtimestamp(stat.st_mtime).isoformat(),
                 "compressed": f.name.endswith(".zst"),
                 "result":     ("repaired" if "_repaired." in f.name else
-                               "clean" if "_clean." in f.name else None),
+                               "clean" if "_clean." in f.name else
+                               "aborted" if "_aborted." in f.name else None),
             })
     return jsonify(backups)
 
