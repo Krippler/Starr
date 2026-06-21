@@ -80,6 +80,9 @@ header {
 .app-tab[data-app="radarr"]   { --tc: #ffd700; }
 .app-tab[data-app="lidarr"]   { --tc: #1db954; }
 .app-tab[data-app="sportarr"] { --tc: #ff6b35; }
+.app-tab[data-app="readarr"]  { --tc: #ff5252; }
+.app-tab[data-app="prowlarr"] { --tc: #ff8c00; }
+.app-tab[data-app="whisparr"] { --tc: #e05fb0; }
 .tab-emoji { font-size: 22px; line-height: 1; }
 .tab-name  { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); transition: color .2s; }
 .tab-port  { font-size: 9px; color: var(--dim); }
@@ -344,6 +347,15 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     <button class="app-tab" data-app="sportarr" onclick="switchApp('sportarr')">
       <span class="tab-emoji">🏆</span><span class="tab-name">Sportarr</span><span class="tab-port">:1867</span>
     </button>
+    <button class="app-tab" data-app="readarr" onclick="switchApp('readarr')">
+      <span class="tab-emoji">📚</span><span class="tab-name">Readarr</span><span class="tab-port">:8787</span>
+    </button>
+    <button class="app-tab" data-app="prowlarr" onclick="switchApp('prowlarr')">
+      <span class="tab-emoji">🔎</span><span class="tab-name">Prowlarr</span><span class="tab-port">:9696</span>
+    </button>
+    <button class="app-tab" data-app="whisparr" onclick="switchApp('whisparr')">
+      <span class="tab-emoji">🔞</span><span class="tab-name">Whisparr</span><span class="tab-port">:6969</span>
+    </button>
   </div>
 
   <div class="phases">
@@ -564,6 +576,15 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
 
 <script>
 // ── App definitions ───────────────────────────────────────────────────────────
+// The six SQLite ops are identical across every *arr app.
+const STANDARD_OPS = [
+  { id:'integrity',     name:'Integrity Check', icon:'🔍', desc:'PRAGMA integrity_check — full page scan.',   safe:true },
+  { id:'foreign_keys',  name:'Foreign Keys',    icon:'🔗', desc:'Find & remove orphaned FK rows.',            safe:true },
+  { id:'wal_checkpoint',name:'WAL Checkpoint',  icon:'💾', desc:'Flush write-ahead log to main DB file.',     safe:true },
+  { id:'vacuum',        name:'VACUUM',          icon:'🧹', desc:'Defragment and reclaim free pages.',         safe:true },
+  { id:'reindex',       name:'Reindex',         icon:'📑', desc:'Drop and rebuild every index from scratch.', safe:true },
+  { id:'analyze',       name:'ANALYZE',         icon:'📊', desc:'Refresh query-planner statistics.',          safe:true },
+];
 const APPS = {
   sonarr: {
     name: 'SONARR', sub: 'TV Series Database Repair', color: '#00c8ff', port: 8989, api: 'v3',
@@ -616,6 +637,24 @@ const APPS = {
       { id:'reindex',       name:'Reindex',         icon:'📑', desc:'Drop and rebuild every index from scratch.', safe:true },
       { id:'analyze',       name:'ANALYZE',         icon:'📊', desc:'Refresh query-planner statistics.',          safe:true },
     ]
+  },
+  readarr: {
+    name: 'READARR', sub: 'Books Database Repair', color: '#ff5252', port: 8787, api: 'v1',
+    urlbasePlaceholder: '/readarr', dbPlaceholder: '/config/readarr.db',
+    icon: `<path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>`,
+    ops: STANDARD_OPS,
+  },
+  prowlarr: {
+    name: 'PROWLARR', sub: 'Indexer Database Repair', color: '#ff8c00', port: 9696, api: 'v1',
+    urlbasePlaceholder: '/prowlarr', dbPlaceholder: '/config/prowlarr.db',
+    icon: `<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>`,
+    ops: STANDARD_OPS,
+  },
+  whisparr: {
+    name: 'WHISPARR', sub: 'Adult Database Repair', color: '#e05fb0', port: 6969, api: 'v3',
+    urlbasePlaceholder: '/whisparr', dbPlaceholder: '/config/whisparr.db',
+    icon: `<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>`,
+    ops: STANDARD_OPS,
   }
 };
 

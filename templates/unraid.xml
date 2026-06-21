@@ -87,6 +87,15 @@
   <Config Name="SPORTARR_APIKEY" Target="SPORTARR_APIKEY" Default="" Mode=""
           Description="Sportarr API key. Leave blank to disable."
           Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="READARR_APIKEY" Target="READARR_APIKEY" Default="" Mode=""
+          Description="Readarr API key. Leave blank to disable."
+          Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="PROWLARR_APIKEY" Target="PROWLARR_APIKEY" Default="" Mode=""
+          Description="Prowlarr API key. Leave blank to disable."
+          Type="Variable" Display="always" Required="false" Mask="true"/>
+  <Config Name="WHISPARR_APIKEY" Target="WHISPARR_APIKEY" Default="" Mode=""
+          Description="Whisparr API key. Leave blank to disable."
+          Type="Variable" Display="always" Required="false" Mask="true"/>
 
   <!-- ── Optional URL overrides (rarely needed) ─────────────────────────── -->
   <!-- These let you override the URL auto-discovery for any app — e.g. you
@@ -103,6 +112,15 @@
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="SPORTARR_URL" Target="SPORTARR_URL" Default="" Mode=""
           Description="Optional. Override the discovered Sportarr URL."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="READARR_URL" Target="READARR_URL" Default="" Mode=""
+          Description="Optional. Override the discovered Readarr URL."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="PROWLARR_URL" Target="PROWLARR_URL" Default="" Mode=""
+          Description="Optional. Override the discovered Prowlarr URL."
+          Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="WHISPARR_URL" Target="WHISPARR_URL" Default="" Mode=""
+          Description="Optional. Override the discovered Whisparr URL."
           Type="Variable" Display="advanced" Required="false" Mask="false"/>
 
 </Container>

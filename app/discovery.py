@@ -41,6 +41,9 @@ APP_FINGERPRINTS = {
     "radarr":   {"port": 7878, "image_keywords": ["radarr"]},
     "lidarr":   {"port": 8686, "image_keywords": ["lidarr"]},
     "sportarr": {"port": 1867, "image_keywords": ["sportarr"]},
+    "readarr":  {"port": 8787, "image_keywords": ["readarr"]},
+    "prowlarr": {"port": 9696, "image_keywords": ["prowlarr"]},
+    "whisparr": {"port": 6969, "image_keywords": ["whisparr"]},
 }
 
 
