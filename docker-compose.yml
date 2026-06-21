@@ -42,12 +42,18 @@ services:
       RADARR_APIKEY:   ${RADARR_APIKEY:-}
       LIDARR_APIKEY:   ${LIDARR_APIKEY:-}
       SPORTARR_APIKEY: ${SPORTARR_APIKEY:-}
+      READARR_APIKEY:  ${READARR_APIKEY:-}
+      PROWLARR_APIKEY: ${PROWLARR_APIKEY:-}
+      WHISPARR_APIKEY: ${WHISPARR_APIKEY:-}
 
       # Optional URL overrides (format: http://host:port[/urlbase])
       SONARR_URL:   ${SONARR_URL:-}
       RADARR_URL:   ${RADARR_URL:-}
       LIDARR_URL:   ${LIDARR_URL:-}
       SPORTARR_URL: ${SPORTARR_URL:-}
+      READARR_URL:  ${READARR_URL:-}
+      PROWLARR_URL: ${PROWLARR_URL:-}
+      WHISPARR_URL: ${WHISPARR_URL:-}
 
     volumes:
       # The host appdata root — Starr finds each *arr's /config by inspecting

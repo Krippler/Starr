@@ -370,6 +370,23 @@ def test_lidarr_uses_api_v1():
     assert srv.APP_DEFAULTS["sportarr"]["api"] == "v3"
 
 
+def test_new_arr_apps_registered():
+    """Readarr/Prowlarr (v1) and Whisparr (v3) are registered with correct
+    ports + API versions, and surface through /api/apps when an apikey is set."""
+    assert srv.APP_DEFAULTS["readarr"]  == {"port": 8787, "dbname": "readarr.db",  "api": "v1"}
+    assert srv.APP_DEFAULTS["prowlarr"] == {"port": 9696, "dbname": "prowlarr.db", "api": "v1"}
+    assert srv.APP_DEFAULTS["whisparr"] == {"port": 6969, "dbname": "whisparr.db", "api": "v3"}
+
+
+def test_new_apps_appear_in_api_apps(client):
+    srv.app.config["WHISPARR_APIKEY"] = "wk"
+    try:
+        body = json.loads(client.get("/api/apps").data)
+        assert any(a["app"] == "whisparr" for a in body)
+    finally:
+        srv.app.config["WHISPARR_APIKEY"] = ""
+
+
 def test_get_status_uses_api_version(monkeypatch):
     """_get_status must hit /api/<version>/system/status for the given app."""
     seen = {}

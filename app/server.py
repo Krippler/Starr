@@ -65,6 +65,12 @@ class Config:
     LIDARR_URL          = os.environ.get("LIDARR_URL", "")
     SPORTARR_APIKEY     = os.environ.get("SPORTARR_APIKEY", "")
     SPORTARR_URL        = os.environ.get("SPORTARR_URL", "")
+    READARR_APIKEY      = os.environ.get("READARR_APIKEY", "")
+    READARR_URL         = os.environ.get("READARR_URL", "")
+    PROWLARR_APIKEY     = os.environ.get("PROWLARR_APIKEY", "")
+    PROWLARR_URL        = os.environ.get("PROWLARR_URL", "")
+    WHISPARR_APIKEY     = os.environ.get("WHISPARR_APIKEY", "")
+    WHISPARR_URL        = os.environ.get("WHISPARR_URL", "")
 
 app.config.from_object(Config)
 logging.getLogger().setLevel(app.config["LOG_LEVEL"])
@@ -73,12 +79,15 @@ logging.getLogger().setLevel(app.config["LOG_LEVEL"])
 CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
 
 APP_DEFAULTS = {
-    # api: Sonarr/Radarr (and the Sonarr-fork Sportarr) speak /api/v3;
-    # Lidarr (like Readarr) speaks /api/v1.
+    # api: Sonarr/Radarr/Whisparr (and the Sonarr-fork Sportarr) speak
+    # /api/v3; Lidarr / Readarr / Prowlarr speak /api/v1.
     "sonarr":   {"port": 8989, "dbname": "sonarr.db",   "api": "v3"},
     "radarr":   {"port": 7878, "dbname": "radarr.db",   "api": "v3"},
     "lidarr":   {"port": 8686, "dbname": "lidarr.db",   "api": "v1"},
     "sportarr": {"port": 1867, "dbname": "sportarr.db", "api": "v3"},
+    "readarr":  {"port": 8787, "dbname": "readarr.db",  "api": "v1"},
+    "prowlarr": {"port": 9696, "dbname": "prowlarr.db", "api": "v1"},
+    "whisparr": {"port": 6969, "dbname": "whisparr.db", "api": "v3"},
 }
 
 # After the app first reads offline, re-poll this many times at this interval
@@ -821,7 +830,7 @@ def api_apps():
     apps = []
     discovered = {d["app"]: d for d in (_discovery_cache.get("apps") or [])}
     browser_host = _request_host_only()
-    for name in ("sonarr", "radarr", "lidarr", "sportarr"):
+    for name in APP_DEFAULTS:
         upper  = name.upper()
         apikey = app.config.get(f"{upper}_APIKEY", "")
         env_url = app.config.get(f"{upper}_URL", "")
