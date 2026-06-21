@@ -808,3 +808,95 @@ def test_restore_endpoint_starts_job(client, tmp_path, monkeypatch):
         assert json.loads(r.data)["app"] == "sonarr"
     finally:
         srv.app.config["SONARR_APIKEY"] = ""
+
+
+# ── Run history ─────────────────────────────────────────────────────────────────
+def test_history_store_record_and_recent(tmp_path):
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json")
+    h.record({"app": "sonarr", "status": "ok", "duration_s": 10})
+    h.record({"app": "radarr", "status": "warning", "duration_s": 20})
+    h.record({"app": "sonarr", "status": "error", "duration_s": 5})
+    assert len(h.all()) == 3
+    # newest first, filtered
+    son = h.recent(app="sonarr")
+    assert [e["status"] for e in son] == ["error", "ok"]
+    # limit honoured
+    assert len(h.recent(limit=1)) == 1
+    # ts auto-filled
+    assert all("ts" in e for e in h.all())
+
+
+def test_history_store_persists(tmp_path):
+    from history import HistoryStore
+    p = tmp_path / "h.json"
+    HistoryStore(p).record({"app": "sonarr", "status": "ok", "duration_s": 1})
+    assert HistoryStore(p).last(app="sonarr")["status"] == "ok"
+
+
+def test_history_store_cap(tmp_path):
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json", cap=5)
+    for i in range(12):
+        h.record({"app": "sonarr", "status": "ok", "duration_s": i})
+    items = h.all()
+    assert len(items) == 5
+    assert items[0]["duration_s"] == 7   # oldest kept is the 8th (0-indexed 7)
+
+
+def test_history_estimate_median_real_runs_only(tmp_path):
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json")
+    # real runs that should count
+    for d in (10, 20, 30):
+        h.record({"app": "sonarr", "status": "ok", "duration_s": d})
+    # noise that must be excluded from the estimate
+    h.record({"app": "sonarr", "status": "clean", "duration_s": 999})
+    h.record({"app": "sonarr", "status": "error", "duration_s": 999})
+    h.record({"app": "sonarr", "status": "ok", "duration_s": 999, "dry_run": True})
+    est = h.estimate("sonarr")
+    assert est["samples"] == 3
+    assert est["seconds"] == 20   # median of 10,20,30
+    # no data for another app
+    assert h.estimate("radarr")["seconds"] is None
+
+
+def test_history_endpoints(client, tmp_path):
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json")
+    h.record({"app": "sonarr", "status": "ok", "duration_s": 12})
+    h.record({"app": "sonarr", "status": "ok", "duration_s": 18})
+    srv._history = h
+    r = client.get("/api/history?app=sonarr")
+    assert r.status_code == 200
+    body = json.loads(r.data)
+    assert len(body) == 2 and body[0]["status"] == "ok"
+    # estimate endpoint
+    r = client.get("/api/history/estimate?app=sonarr")
+    assert r.status_code == 200
+    assert json.loads(r.data)["seconds"] == 15
+    # missing app -> 400
+    assert client.get("/api/history/estimate").status_code == 400
+
+
+def test_record_history_from_worker(tmp_path, monkeypatch):
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json")
+    monkeypatch.setattr(srv, "_history", h)
+    db = tmp_path / "sonarr.db"; db.write_bytes(b"x" * 100)
+    monkeypatch.setattr(srv, "_step_preflight", lambda cfg: str(db))
+    monkeypatch.setattr(srv, "_step_shutdown",  lambda cfg: True)
+    monkeypatch.setattr(srv, "_step_backup",    lambda cfg, p: "sonarr_1.db")
+    monkeypatch.setattr(srv, "_flag_backup",    lambda b, r: b)
+    monkeypatch.setattr(srv, "_step_report",    lambda *a: None)
+    monkeypatch.setattr(srv, "_step_restart",   lambda cfg, r: None)
+    monkeypatch.setattr(srv, "_step_repair",    lambda cfg, p: {"integrity": ("ok", "clean")})
+    monkeypatch.setattr(srv, "_get_status",     lambda *a, **k: None)
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+    srv._job.reset()
+    srv._repair_worker({"app": "sonarr", "ops": ["integrity"], "host": "h",
+                        "port": 1, "apikey": "k"})
+    last = h.last(app="sonarr")
+    assert last is not None
+    assert last["db_bytes"] == 100
+    assert last["app"] == "sonarr"

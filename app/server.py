@@ -727,6 +727,7 @@ def _repair_worker(cfg: dict) -> None:
     emit("SYS", f"Starr DB Repair v1.0 – job started for {cfg['app'].upper()}", "sys")
     emit("SYS", f"Dry run: {cfg.get('dry_run', False)}", "sys")
 
+    db_path = None
     try:
         db_path = _step_preflight(cfg)
         if not db_path:
@@ -820,6 +821,9 @@ def _repair_worker(cfg: dict) -> None:
                 "message":  err_msg,
             }), "__done__")
         emit("SYS", "Job finished. SSE stream remains open.", "sys")
+        # Record the run in persistent history (powers the last-run pill,
+        # pre-repair estimate, and trend chart). Best-effort.
+        _record_history(cfg, _job.result or {}, db_path)
         # Fire notifications (best-effort, never raises). Scheduled runs carry
         # their own notify level override in cfg["notify"]; manual runs fall
         # back to the global level.
@@ -829,6 +833,34 @@ def _repair_worker(cfg: dict) -> None:
             scheduled=bool(cfg.get("_scheduled")),
             schedule_name=cfg.get("_schedule_name"),
         )
+
+
+def _record_history(cfg: dict, result: dict, db_path) -> None:
+    """Append one record to the run-history store. Never raises."""
+    try:
+        db_bytes = None
+        if db_path:
+            try:
+                db_bytes = os.path.getsize(db_path)
+            except OSError:
+                db_bytes = None
+        duration_s = round(time.time() - _job.start_time, 1) if _job.start_time else 0
+        _history.record({
+            "app":           (cfg.get("app") or "?").lower(),
+            "status":        result.get("status", "unknown"),
+            "fixed":         result.get("fixed", 0),
+            "errors":        result.get("errors", 0),
+            "duration_s":    duration_s,
+            "elapsed":       result.get("elapsed") or _elapsed(),
+            "backup":        result.get("backup"),
+            "db_bytes":      db_bytes,
+            "dry_run":       bool(cfg.get("dry_run")),
+            "scheduled":     bool(cfg.get("_scheduled")),
+            "schedule_name": cfg.get("_schedule_name"),
+            "message":       result.get("message"),
+        })
+    except Exception:
+        log.exception("Failed to record run history")
 
 
 # ---------------------------------------------------------------------------
@@ -1343,11 +1375,37 @@ def _run_scheduled(cfg: dict) -> dict:
 
 
 from schedules import ScheduleStore, ScheduleRunner   # noqa: E402
+from history import HistoryStore                       # noqa: E402
 import notify as _notify                               # noqa: E402
 import atexit                                          # noqa: E402
 
 # Notification config (Apprise + Signal). Persisted alongside schedules.
 _notify_config = _notify.NotifyConfig(app.config["BACKUP_DIR"] / ".starr-notify.json")
+
+# Persistent run history (last-run pill, pre-repair estimate, trend chart).
+_history = HistoryStore(app.config["BACKUP_DIR"] / ".starr-history.json")
+
+
+@app.route("/api/history")
+@require_api_key
+def api_history():
+    """Recent run records, newest first. Optional ?app= filter and ?limit=."""
+    app_filter = (request.args.get("app") or "").strip().lower() or None
+    try:
+        limit = max(1, min(int(request.args.get("limit", "50")), 500))
+    except ValueError:
+        limit = 50
+    return jsonify(_history.recent(app=app_filter, limit=limit))
+
+
+@app.route("/api/history/estimate")
+@require_api_key
+def api_history_estimate():
+    """Median duration of comparable past runs for ?app= (pre-repair hint)."""
+    app_name = (request.args.get("app") or "").strip().lower()
+    if not app_name:
+        return jsonify({"error": "app is required"}), 400
+    return jsonify(_history.estimate(app_name))
 
 
 @app.route("/api/notify")
