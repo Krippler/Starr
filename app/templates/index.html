@@ -238,6 +238,13 @@ header {
 .btn-danger:hover { background: var(--err-dim); }
 .btn-sm { padding: 6px 12px; font-size: 10px; }
 .action-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.run-meta { margin-left: auto; font-size: 11px; color: var(--muted); display: flex; gap: 14px; align-items: center; }
+.run-meta .rm-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 5px; background: var(--muted); }
+.run-meta .rm-ok   { background: var(--ok, #3ecf8e); }
+.run-meta .rm-warn { background: var(--warn, #e3b341); }
+.run-meta .rm-err  { background: var(--err, #f25c54); }
+.run-meta .rm-clean{ background: var(--app, #6cf); }
+.run-meta strong { color: var(--fg, #e6e6e6); font-weight: 600; }
 .link-btn { font-family: 'JetBrains Mono', monospace; font-size: 10px; background: none; border: none; cursor: pointer; letter-spacing: .08em; text-transform: uppercase; padding: 3px 0; text-decoration: underline; text-underline-offset: 3px; transition: filter .15s; }
 .link-btn.accent { color: var(--app); }
 .link-btn.muted  { color: var(--muted); }
@@ -498,6 +505,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
       Refresh Backups
     </button>
+    <span id="runMeta" class="run-meta"></span>
   </div>
 
   <div class="panel">
@@ -879,6 +887,7 @@ function unlockUI() {
   loadBackups();
   loadSchedules();
   loadNotify();
+  refreshRunMeta();
   setStatus('READY', 'var(--ok)', false);
   // Keep an SSE connection open while authenticated so scheduled (and any
   // server-initiated) jobs stream into the Repair Log live instead of
@@ -1027,6 +1036,53 @@ function switchApp(app) {
 
   // Pre-fill from env if available
   loadEnvConfig({ logErrors: false });
+  refreshRunMeta();
+}
+
+// ── Last-run pill + pre-repair estimate ─────────────────────────────────────────
+function fmtDuration(s) {
+  s = Math.round(s);
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60), sec = s % 60;
+  if (m < 60) return sec ? `${m}m ${sec}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+function fmtAgo(ts) {
+  const diff = Date.now() / 1000 - ts;
+  if (diff < 90) return 'just now';
+  if (diff < 5400) return Math.round(diff / 60) + 'm ago';
+  if (diff < 129600) return Math.round(diff / 3600) + 'h ago';
+  return Math.round(diff / 86400) + 'd ago';
+}
+async function refreshRunMeta() {
+  const el = document.getElementById('runMeta');
+  if (!el || !getWebKey()) { if (el) el.innerHTML = ''; return; }
+  const appAtRequest = currentApp;
+  try {
+    const [hRes, eRes] = await Promise.all([
+      fetch(`/api/history?app=${currentApp}&limit=1`, { headers: authHeaders() }),
+      fetch(`/api/history/estimate?app=${currentApp}`, { headers: authHeaders() }),
+    ]);
+    if (hRes.status === 401) { handle401(); return; }
+    if (appAtRequest !== currentApp) return;   // user switched while in-flight
+    const hist = hRes.ok ? await hRes.json() : [];
+    const est  = eRes.ok ? await eRes.json() : {};
+    const parts = [];
+    const last = hist[0];
+    if (last) {
+      const cls = ({ ok:'rm-ok', warning:'rm-warn', error:'rm-err', clean:'rm-clean' })[last.status] || '';
+      const label = ({ ok:'clean', warning:'fixed issues', error:'failed', clean:'clean', aborted:'aborted', skipped:'skipped' })[last.status] || last.status;
+      parts.push(`<span title="${escHtml(last.elapsed || '')} · ${last.fixed||0} fixed, ${last.errors||0} errors">`
+        + `<span class="rm-dot ${cls}"></span>Last run: <strong>${escHtml(label)}</strong> ${fmtAgo(last.ts)}</span>`);
+    } else {
+      parts.push('<span><span class="rm-dot"></span>No prior runs</span>');
+    }
+    if (est && est.seconds) {
+      parts.push(`<span title="Median of ${est.samples} past run(s)">Est. <strong>~${fmtDuration(est.seconds)}</strong></span>`);
+    }
+    el.innerHTML = parts.join('');
+  } catch (_) { el.innerHTML = ''; }
 }
 
 // ── Ops ───────────────────────────────────────────────────────────────────────
@@ -1270,6 +1326,7 @@ function finishJob() {
   // into the log. The stream is only closed by lockUI() / page unload.
   // Reload schedules so the row reflects the new last_status / next_run.
   if (typeof loadSchedules === 'function') loadSchedules();
+  refreshRunMeta();
 }
 
 function setPhase(n,state) { const el=document.getElementById('ph'+n); if(el) el.className='phase '+state; }

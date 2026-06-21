@@ -19,6 +19,7 @@
 - **Auto-backup** before every repair, with configurable retention (default 7 days)
 - **6 SQLite operations**: integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE
 - **Dry-run mode** — preview every step without making changes
+- **Run history** — last-run pill, pre-repair time estimate, and persistent per-app run log
 - **Supports four *arr apps** — Sonarr · Radarr · Lidarr · Sportarr
 - **Docker image** — `linux/amd64` (Unraid, Synology, most x86 NAS), published to Docker Hub + GHCR and signed with cosign
 - **Unraid Community Apps template** included
@@ -237,6 +238,8 @@ https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml
 | `GET` | `/api/repair/status` | Yes | Current job state |
 | `GET` | `/api/repair/stream` | Yes | SSE live log stream |
 | `GET` | `/api/backups` | Yes | List backup files |
+| `GET` | `/api/history` | Yes | Recent run records (`?app=`, `?limit=`) |
+| `GET` | `/api/history/estimate` | Yes | Median duration of past runs (`?app=`) |
 
 All protected endpoints require an `X-Api-Key` header matching your `SECRET_KEY`.  
 The SSE stream accepts `?api_key=` as a query parameter instead (browsers cannot set headers on `EventSource`).
