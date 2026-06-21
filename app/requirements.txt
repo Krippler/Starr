@@ -16,3 +16,7 @@ docker==7.1.0
 
 # Background scheduler for /api/schedules — fires repair jobs on a cron.
 APScheduler==3.10.4
+
+# Notifications: Apprise drives 100+ services (Discord/Telegram/ntfy/…).
+# Signal goes direct to signal-cli-rest-api via requests (see app/notify.py).
+apprise==1.9.2

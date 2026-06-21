@@ -575,3 +575,83 @@ def test_backup_delete_rejects_path_traversal(client, tmp_path):
     # Flask normalises encoded slashes, so a traversal request 404s rather than
     # escaping the dir — the key assertion is it never 200s.
     assert client.delete("/api/backups/..%2f..%2fetc%2fpasswd").status_code in (400, 404)
+
+
+# ── Notifications ─────────────────────────────────────────────────────────────
+def _notify_mod():
+    import sys
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "app"))
+    import notify
+    return notify
+
+
+def test_notify_should_notify_levels():
+    n = _notify_mod()
+    # off → never
+    assert n.should_notify("off", "error") is False
+    # error → only error
+    assert n.should_notify("error", "error") is True
+    assert n.should_notify("error", "warning") is False
+    assert n.should_notify("error", "clean") is False
+    # warning → warning + error
+    assert n.should_notify("warning", "warning") is True
+    assert n.should_notify("warning", "error") is True
+    assert n.should_notify("warning", "clean") is False
+    # always → everything
+    assert n.should_notify("always", "clean") is True
+    assert n.should_notify("always", "error") is True
+
+
+def test_notify_config_round_trip(tmp_path):
+    n = _notify_mod()
+    cfg = n.NotifyConfig(tmp_path / ".notify.json")
+    out = cfg.update({
+        "enabled": True, "level": "warning",
+        "apprise_urls": "ntfy://ntfy.sh/topic\n\n json://bad ",
+        "signal": {"api_url": "http://sig:8080/", "number": "+1555", "recipients": "+1666, +1777"},
+    })
+    assert out["enabled"] is True
+    assert out["level"] == "warning"
+    assert out["apprise_urls"] == ["ntfy://ntfy.sh/topic", "json://bad"]
+    assert out["signal"]["api_url"] == "http://sig:8080"   # trailing slash stripped
+    assert out["signal"]["recipients"] == ["+1666", "+1777"]
+    # Reload from disk
+    cfg2 = n.NotifyConfig(tmp_path / ".notify.json")
+    assert cfg2.get()["level"] == "warning"
+
+
+def test_notify_config_rejects_bad_level(tmp_path):
+    n = _notify_mod()
+    cfg = n.NotifyConfig(tmp_path / ".n.json")
+    with pytest.raises(ValueError):
+        cfg.update({"level": "loud"})
+
+
+def test_notify_signal_posts_to_rest_api(monkeypatch):
+    n = _notify_mod()
+    captured = {}
+    class FakeResp:
+        status_code = 201
+        text = ""
+    def fake_post(url, json=None, timeout=None):
+        captured["url"] = url
+        captured["json"] = json
+        return FakeResp()
+    monkeypatch.setattr(n.requests, "post", fake_post)
+    sent, errs = n._send_signal(
+        {"api_url": "http://sig:8080", "number": "+1555", "recipients": ["+1666"]},
+        "hello")
+    assert sent == 1 and errs == []
+    assert captured["url"] == "http://sig:8080/v2/send"
+    assert captured["json"]["recipients"] == ["+1666"]
+    assert captured["json"]["number"] == "+1555"
+
+
+def test_api_notify_get_and_update(client):
+    r = client.get("/api/notify")
+    assert r.status_code == 200
+    assert "level" in json.loads(r.data)
+    r = client.put("/api/notify", data=json.dumps({"level": "always", "enabled": True}),
+                   content_type="application/json")
+    assert r.status_code == 200
+    assert json.loads(r.data)["level"] == "always"

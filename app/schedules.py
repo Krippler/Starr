@@ -147,6 +147,8 @@ class ScheduleStore:
             "enabled":        bool(payload.get("enabled", True)),
             "skip_if_clean":  bool(payload.get("skip_if_clean", True)),
             "dry_run":        bool(payload.get("dry_run", False)),
+            # Per-schedule notify level: inherit | off | error | warning | always
+            "notify":         (payload.get("notify") or "inherit").lower(),
             "container_name": (payload.get("container_name") or "").strip(),
             "last_run":       payload.get("last_run"),
             "last_status":    payload.get("last_status"),
@@ -211,6 +213,7 @@ class ScheduleRunner:
             "container_name":  sched.get("container_name") or "",
             "dry_run":         bool(sched.get("dry_run")),
             "skip_if_clean":   bool(sched.get("skip_if_clean")),
+            "notify":          sched.get("notify") or "inherit",
             "_scheduled":      True,
             "_schedule_id":    sid,
             "_schedule_name":  sched.get("name"),

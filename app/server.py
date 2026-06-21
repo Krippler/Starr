@@ -729,6 +729,15 @@ def _repair_worker(cfg: dict) -> None:
                 "message":  err_msg,
             }), "__done__")
         emit("SYS", "Job finished. SSE stream remains open.", "sys")
+        # Fire notifications (best-effort, never raises). Scheduled runs carry
+        # their own notify level override in cfg["notify"]; manual runs fall
+        # back to the global level.
+        _notify.maybe_notify(
+            _notify_config, cfg.get("app", "?"), _job.result or {},
+            level_override=cfg.get("notify"),
+            scheduled=bool(cfg.get("_scheduled")),
+            schedule_name=cfg.get("_schedule_name"),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1041,7 +1050,61 @@ def _run_scheduled(cfg: dict) -> dict:
 
 
 from schedules import ScheduleStore, ScheduleRunner   # noqa: E402
+import notify as _notify                               # noqa: E402
 import atexit                                          # noqa: E402
+
+# Notification config (Apprise + Signal). Persisted alongside schedules.
+_notify_config = _notify.NotifyConfig(app.config["BACKUP_DIR"] / ".starr-notify.json")
+
+
+@app.route("/api/notify")
+@require_api_key
+def api_notify_get():
+    return jsonify(_notify_config.get())
+
+
+@app.route("/api/notify", methods=["PUT"])
+@require_api_key
+def api_notify_update():
+    try:
+        return jsonify(_notify_config.update(request.get_json(force=True) or {}))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+
+@app.route("/api/notify/test", methods=["POST"])
+@require_api_key
+def api_notify_test():
+    """Send a test notification. Uses the saved config, with any fields in the
+    request body overlaid so users can test edits before saving."""
+    body = request.get_json(silent=True) or {}
+    cfg = _merge_notify_overrides(_notify_config.get(), body)
+    summary = _notify.dispatch(cfg, "🔔 Starr test notification",
+                               "If you can read this, notifications are wired up correctly.")
+    code = 200 if not summary["errors"] else 207
+    return jsonify(summary), code
+
+
+def _merge_notify_overrides(saved: dict, body: dict) -> dict:
+    out = dict(saved)
+    out["signal"] = dict(saved.get("signal") or {})
+    if "apprise_urls" in body:
+        urls = body["apprise_urls"]
+        if isinstance(urls, str):
+            urls = [u.strip() for u in urls.splitlines()]
+        out["apprise_urls"] = [u.strip() for u in (urls or []) if u.strip()]
+    if "signal" in body and isinstance(body["signal"], dict):
+        s = body["signal"]
+        recips = s.get("recipients", out["signal"].get("recipients", []))
+        if isinstance(recips, str):
+            recips = [r.strip() for r in recips.replace(",", "\n").splitlines()]
+        out["signal"] = {
+            "api_url":    (s.get("api_url", out["signal"].get("api_url", "")) or "").strip().rstrip("/"),
+            "number":     (s.get("number", out["signal"].get("number", "")) or "").strip(),
+            "recipients": [r.strip() for r in (recips or []) if r.strip()],
+        }
+    return out
+
 
 # Init schedule store + runner. Tests can disable the runner via env to avoid
 # leaving an APScheduler thread alive (which would block pytest from exiting).
