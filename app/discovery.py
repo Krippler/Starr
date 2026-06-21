@@ -36,14 +36,17 @@ log = logging.getLogger("starr-repair.discovery")
 
 # Maps the canonical app name onto (default-port, image-keywords). The image
 # keywords are matched as substrings against the container's repo:tag string.
+# dbname is the path of the SQLite file relative to the container's /config.
+# Almost always "<app>.db"; Bazarr keeps it under db/.
 APP_FINGERPRINTS = {
-    "sonarr":   {"port": 8989, "image_keywords": ["sonarr"]},
-    "radarr":   {"port": 7878, "image_keywords": ["radarr"]},
-    "lidarr":   {"port": 8686, "image_keywords": ["lidarr"]},
-    "sportarr": {"port": 1867, "image_keywords": ["sportarr"]},
-    "readarr":  {"port": 8787, "image_keywords": ["readarr"]},
-    "prowlarr": {"port": 9696, "image_keywords": ["prowlarr"]},
-    "whisparr": {"port": 6969, "image_keywords": ["whisparr"]},
+    "sonarr":   {"port": 8989, "image_keywords": ["sonarr"],   "dbname": "sonarr.db"},
+    "radarr":   {"port": 7878, "image_keywords": ["radarr"],   "dbname": "radarr.db"},
+    "lidarr":   {"port": 8686, "image_keywords": ["lidarr"],   "dbname": "lidarr.db"},
+    "sportarr": {"port": 1867, "image_keywords": ["sportarr"], "dbname": "sportarr.db"},
+    "readarr":  {"port": 8787, "image_keywords": ["readarr"],  "dbname": "readarr.db"},
+    "prowlarr": {"port": 9696, "image_keywords": ["prowlarr"], "dbname": "prowlarr.db"},
+    "whisparr": {"port": 6969, "image_keywords": ["whisparr"], "dbname": "whisparr.db"},
+    "bazarr":   {"port": 6767, "image_keywords": ["bazarr"],   "dbname": "db/bazarr.db"},
 }
 
 
@@ -207,8 +210,9 @@ def discover() -> dict[str, Any]:
         url = f"http://{ip}:{port}{urlbase}" if ip else None
         published = _published_port(container, port)
         config_host = _config_host_path(container)
+        dbname = APP_FINGERPRINTS[app].get("dbname", f"{app}.db")
         db_internal = _translate_host_to_internal(
-            f"{config_host}/{app}.db" if config_host else None,
+            f"{config_host}/{dbname}" if config_host else None,
             host_root, container_root)
         by_app[app] = {
             "app":              app,

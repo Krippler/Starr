@@ -45,6 +45,7 @@ services:
       READARR_APIKEY:  ${READARR_APIKEY:-}
       PROWLARR_APIKEY: ${PROWLARR_APIKEY:-}
       WHISPARR_APIKEY: ${WHISPARR_APIKEY:-}
+      BAZARR_APIKEY:   ${BAZARR_APIKEY:-}
 
       # Optional URL overrides (format: http://host:port[/urlbase])
       SONARR_URL:   ${SONARR_URL:-}
@@ -54,6 +55,7 @@ services:
       READARR_URL:  ${READARR_URL:-}
       PROWLARR_URL: ${PROWLARR_URL:-}
       WHISPARR_URL: ${WHISPARR_URL:-}
+      BAZARR_URL:   ${BAZARR_URL:-}
 
     volumes:
       # The host appdata root — Starr finds each *arr's /config by inspecting

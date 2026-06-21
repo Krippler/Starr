@@ -83,6 +83,7 @@ header {
 .app-tab[data-app="readarr"]  { --tc: #ff5252; }
 .app-tab[data-app="prowlarr"] { --tc: #ff8c00; }
 .app-tab[data-app="whisparr"] { --tc: #e05fb0; }
+.app-tab[data-app="bazarr"]   { --tc: #6f9eff; }
 .tab-emoji { font-size: 22px; line-height: 1; }
 .tab-name  { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); transition: color .2s; }
 .tab-port  { font-size: 9px; color: var(--dim); }
@@ -355,6 +356,9 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     </button>
     <button class="app-tab" data-app="whisparr" onclick="switchApp('whisparr')">
       <span class="tab-emoji">🔞</span><span class="tab-name">Whisparr</span><span class="tab-port">:6969</span>
+    </button>
+    <button class="app-tab" data-app="bazarr" onclick="switchApp('bazarr')">
+      <span class="tab-emoji">💬</span><span class="tab-name">Bazarr</span><span class="tab-port">:6767</span>
     </button>
   </div>
 
@@ -718,6 +722,12 @@ const APPS = {
     urlbasePlaceholder: '/whisparr', dbPlaceholder: '/config/whisparr.db',
     icon: `<path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>`,
     ops: STANDARD_OPS,
+  },
+  bazarr: {
+    name: 'BAZARR', sub: 'Subtitles Database Repair', color: '#6f9eff', port: 6767, api: '',
+    urlbasePlaceholder: '/bazarr', dbPlaceholder: '/config/db/bazarr.db',
+    icon: `<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>`,
+    ops: STANDARD_OPS,
   }
 };
 
@@ -774,7 +784,7 @@ function updatePlaceholders(app) {
 function syncShutdownWarning() {
   const cfg = APPS[currentApp];
   const pretty = cfg.name.charAt(0) + cfg.name.slice(1).toLowerCase();
-  const api = cfg.api || 'v3';
+  const api = cfg.api ?? 'v3';   // '' (Bazarr) is intentional, don't coerce
   const container = (_appsByName[currentApp]?.container_name || '').trim();
   const title = document.getElementById('warnTitle');
   const body  = document.getElementById('warnBody');
@@ -789,7 +799,7 @@ function syncShutdownWarning() {
   } else {
     title.textContent = `${pretty} will be shut down before any repairs are performed`;
     body.innerHTML =
-      ` The repair sequence calls <code>/api/${api}/system/shutdown</code>, waits for the process to go offline, ` +
+      ` The repair sequence calls <code>${apiPath(api, 'system/shutdown')}</code>, waits for the process to go offline, ` +
       `creates a timestamped backup in <code>/backups</code>, runs SQLite operations on the idle file, ` +
       `then waits for the app to come back online automatically. ` +
       `Do not run while active downloads are in progress.`;
@@ -1070,10 +1080,11 @@ async function testConnection() {
   if (!url)    { logLine('ERR','No URL — set one or click "Detect *arr containers".','err'); return; }
   if (!apikey) { logLine('ERR','API key required.','err'); return; }
   btn.disabled = true; btn.textContent = 'Testing…';
-  const api = APPS[currentApp].api || 'v3';
-  logLine('INFO', `Testing ${url}/api/${api}/system/status`, 'info');
+  const api = APPS[currentApp].api ?? 'v3';
+  const statusUrl = `${url}${apiPath(api, 'system/status')}`;
+  logLine('INFO', `Testing ${statusUrl}`, 'info');
   try {
-    const r = await fetch(`${url}/api/${api}/system/status`,
+    const r = await fetch(statusUrl,
       { headers: { 'X-Api-Key': apikey } });
     if (r.ok) {
       const d = await r.json();
@@ -1309,6 +1320,9 @@ function clearLog() {
   lineCount=0; document.getElementById('lineCount').textContent='0 lines';
 }
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// Build an *arr API path. Most apps are versioned (/api/v3/...); Bazarr is
+// versionless (api === '') → /api/... . Mirrors _api_path() on the server.
+function apiPath(api, endpoint) { return api ? `/api/${api}/${endpoint}` : `/api/${endpoint}`; }
 
 function setStatus(text,dotColor,pulse) {
   document.getElementById('statusText').textContent=text;
