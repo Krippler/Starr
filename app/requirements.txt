@@ -20,3 +20,6 @@ APScheduler==3.10.4
 # Notifications: Apprise drives 100+ services (Discord/Telegram/ntfy/…).
 # Signal goes direct to signal-cli-rest-api via requests (see app/notify.py).
 apprise==1.9.2
+
+# Backup compression (.db.zst). Fast, high ratio.
+zstandard==0.23.0

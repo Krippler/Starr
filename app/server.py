@@ -49,6 +49,8 @@ class Config:
     SECRET_KEY          = os.environ.get("SECRET_KEY", "change-me-in-production")
     MAX_BACKUP_AGE_DAYS = int(os.environ.get("MAX_BACKUP_AGE_DAYS", "7"))
     BACKUP_DIR          = Path(os.environ.get("BACKUP_DIR", "/backups"))
+    # Compress backups to .db.zst (zstd). Big space win; default on.
+    BACKUP_COMPRESS     = os.environ.get("BACKUP_COMPRESS", "true").lower() == "true"
     # Host's appdata root, mounted in once; per-app paths are derived from
     # Docker introspection at runtime.
     APPDATA_DIR         = Path(os.environ.get("APPDATA_DIR", "/appdata"))
@@ -439,39 +441,92 @@ def _step_shutdown(cfg) -> bool:
     emit("ERR", "App did not stop within 60s.", "err"); return False
 
 
+def _compress_file(src: str, dest: str) -> None:
+    """Stream-compress src → dest with zstd. Raises if zstandard is missing."""
+    import zstandard as zstd
+    cctx = zstd.ZstdCompressor(level=int(os.environ.get("BACKUP_ZSTD_LEVEL", "10")))
+    with open(src, "rb") as fin, open(dest, "wb") as fout:
+        cctx.copy_stream(fin, fout)
+
+
 def _step_backup(cfg, db_path: str) -> str | None:
     emit("PHASE", "── Step 3/6  Backup ─────────────────────────────────────", "phase")
     if cfg.get("no_backup"):
         emit("WARN", "Backup skipped (no_backup=true).", "warn"); return None
 
     app.config["BACKUP_DIR"].mkdir(parents=True, exist_ok=True)
-    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
-    dest = app.config["BACKUP_DIR"] / f"{cfg['app']}_{ts}.db"
+    ts      = datetime.now().strftime("%Y%m%d_%H%M%S")
+    compress = bool(app.config.get("BACKUP_COMPRESS", True))
+    suffix  = ".db.zst" if compress else ".db"
+    dest = app.config["BACKUP_DIR"] / f"{cfg['app']}_{ts}{suffix}"
 
     if cfg.get("dry_run"):
-        emit("DRY", f"[DRY] Would copy {db_path} → {dest}", "dry"); return str(dest)
+        emit("DRY", f"[DRY] Would back up {db_path} → {dest}", "dry"); return str(dest)
 
     emit("INFO", f"Source : {db_path}", "info")
     emit("INFO", f"Dest   : {dest}", "info")
+    src_mb = Path(db_path).stat().st_size / 1_048_576
     try:
-        shutil.copy2(db_path, dest)
+        if compress:
+            try:
+                _compress_file(db_path, str(dest))
+            except ImportError:
+                # zstandard not available — fall back to a plain copy so a
+                # backup is still made (never block the safety backup).
+                emit("WARN", "zstandard not installed — storing uncompressed.", "warn")
+                dest = app.config["BACKUP_DIR"] / f"{cfg['app']}_{ts}.db"
+                shutil.copy2(db_path, dest)
+                compress = False
+        else:
+            shutil.copy2(db_path, dest)
     except Exception as e:
         emit("ERR", f"Backup failed: {e}", "err"); return None
 
-    mb = dest.stat().st_size / 1_048_576
-    emit("OK",   f"Backup created ({mb:.1f} MB)", "ok")
+    out_mb = dest.stat().st_size / 1_048_576
+    if compress:
+        ratio = (1 - out_mb / src_mb) * 100 if src_mb else 0
+        emit("OK", f"Backup created ({out_mb:.1f} MB, compressed {ratio:.0f}% from {src_mb:.1f} MB)", "ok")
+    else:
+        emit("OK", f"Backup created ({out_mb:.1f} MB)", "ok")
 
-    # Prune old backups
+    # Prune old backups (match both .db and .db.zst for this app)
     max_days = app.config["MAX_BACKUP_AGE_DAYS"]
-    cutoff   = time.time() - max_days * 86400
-    removed  = 0
-    for old in app.config["BACKUP_DIR"].glob(f"{cfg['app']}_*.db"):
-        if old.stat().st_mtime < cutoff:
-            old.unlink(missing_ok=True); removed += 1
-    if removed:
-        emit("INFO", f"Pruned {removed} backup(s) older than {max_days} days.", "info")
+    if max_days > 0:
+        cutoff  = time.time() - max_days * 86400
+        removed = 0
+        for old in app.config["BACKUP_DIR"].glob(f"{cfg['app']}_*.db*"):
+            if old.stat().st_mtime < cutoff:
+                old.unlink(missing_ok=True); removed += 1
+        if removed:
+            emit("INFO", f"Pruned {removed} backup(s) older than {max_days} days.", "info")
 
     return str(dest)
+
+
+def _flag_backup(backup_path: str | None, results: dict) -> str | None:
+    """After repair, rename the backup to record the outcome:
+      …_clean.db[.zst]    no issues found
+      …_repaired.db[.zst] issues were found/fixed
+    Returns the new path (or the original if no rename happened)."""
+    if not backup_path:
+        return backup_path
+    p = Path(backup_path)
+    if not p.exists():
+        return backup_path
+    issues = sum(1 for s, _ in results.values() if s in ("issues", "fixed", "error"))
+    flag = "repaired" if issues else "clean"
+    # Insert the flag before the .db/.db.zst suffix.
+    name = p.name
+    for suf in (".db.zst", ".db"):
+        if name.endswith(suf):
+            stem = name[: -len(suf)]
+            new = p.with_name(f"{stem}_{flag}{suf}")
+            try:
+                p.rename(new)
+                return str(new)
+            except OSError:
+                return backup_path
+    return backup_path
 
 
 def _step_repair(cfg, db_path: str) -> dict:
@@ -724,6 +779,11 @@ def _repair_worker(cfg: dict) -> None:
                 return
 
         results = _step_repair(cfg, db_path)
+
+        # Tag the backup file with the outcome (…_clean / …_repaired) now that
+        # we know whether anything was found, so it's obvious which to keep.
+        if not cfg.get("dry_run"):
+            backup = _flag_backup(backup, results)
 
         _step_report(cfg, backup, results)
 
@@ -1028,35 +1088,46 @@ def api_stream():
 @app.route("/api/backups")
 @require_api_key
 def api_backups():
-    """List backup files in the backup directory."""
+    """List backup files (.db and .db.zst) in the backup directory."""
     backup_dir = app.config["BACKUP_DIR"]
     backups = []
     if backup_dir.exists():
-        for f in sorted(backup_dir.glob("*.db"), reverse=True):
+        for f in sorted(backup_dir.glob("*.db*"), reverse=True):
+            if not (f.name.endswith(".db") or f.name.endswith(".db.zst")):
+                continue
             stat = f.stat()
             backups.append({
-                "name":     f.name,
-                "size_mb":  round(stat.st_size / 1_048_576, 1),
-                "created":  datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "name":       f.name,
+                "size_mb":    round(stat.st_size / 1_048_576, 1),
+                "created":    datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "compressed": f.name.endswith(".zst"),
+                "result":     ("repaired" if "_repaired." in f.name else
+                               "clean" if "_clean." in f.name else None),
             })
     return jsonify(backups)
+
+
+def _resolve_backup(name: str):
+    """Validate a backup filename and return its safe absolute Path, or None
+    if it's invalid / escapes BACKUP_DIR."""
+    if name != Path(name).name or not (name.endswith(".db") or name.endswith(".db.zst")):
+        return None
+    backup_dir = Path(app.config["BACKUP_DIR"])
+    target = (backup_dir / name).resolve()
+    try:
+        target.relative_to(backup_dir.resolve())
+    except ValueError:
+        return None
+    return target
 
 
 @app.route("/api/backups/<name>", methods=["DELETE"])
 @require_api_key
 def api_backup_delete(name):
-    """Delete a single backup file. Guards against path traversal — only a
-    bare filename ending in .db inside BACKUP_DIR is accepted."""
-    # Reject anything that isn't a plain filename (no slashes, no '..').
-    if name != Path(name).name or not name.endswith(".db"):
+    """Delete a single backup file (path-traversal guarded)."""
+    target = _resolve_backup(name)
+    if target is None:
         return jsonify({"error": "invalid backup name"}), 400
-    backup_dir = app.config["BACKUP_DIR"]
-    target = (backup_dir / name).resolve()
-    # Ensure the resolved path is still inside BACKUP_DIR.
-    try:
-        target.relative_to(Path(backup_dir).resolve())
-    except ValueError:
-        return jsonify({"error": "invalid backup path"}), 400
     if not target.exists():
         return jsonify({"error": "not found"}), 404
     try:
@@ -1065,6 +1136,34 @@ def api_backup_delete(name):
         return jsonify({"error": f"delete failed: {e}"}), 500
     log.info("Deleted backup %s", name)
     return jsonify({"status": "deleted", "name": name})
+
+
+@app.route("/api/backups/delete", methods=["POST"])
+@require_api_key
+def api_backups_bulk_delete():
+    """Delete several backups in one call. Body: {"names": [...]}.
+    Returns per-name results; invalid/missing names are reported, not fatal."""
+    names = (request.get_json(force=True) or {}).get("names") or []
+    if not isinstance(names, list):
+        return jsonify({"error": "names must be a list"}), 400
+    deleted, errors = [], {}
+    for name in names:
+        target = _resolve_backup(str(name))
+        if target is None:
+            errors[name] = "invalid name"
+            continue
+        if not target.exists():
+            errors[name] = "not found"
+            continue
+        try:
+            target.unlink()
+            deleted.append(name)
+        except OSError as e:
+            errors[name] = str(e)
+    log.info("Bulk-deleted %d backup(s)", len(deleted))
+    return jsonify({"deleted": deleted, "errors": errors})
+
+
 def _run_scheduled(cfg: dict) -> dict:
     """Synchronously run a scheduled repair via _repair_worker. Resolves
     host/port/urlbase/apikey/container_name/db_path the same way the
