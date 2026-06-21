@@ -1491,6 +1491,7 @@ def _synthesized_defaults() -> list[dict]:
             "app":            name,
             "name":           name.capitalize(),
             "url":            display_url,
+            "internal_url":   disc.get("url") or "",
             "apikey":         apikey,
             "container_name": disc.get("container_name") or "",
             "db_path":        disc.get("db_path") or "",

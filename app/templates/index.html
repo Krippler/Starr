@@ -88,6 +88,21 @@ header {
 .tab-name  { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); transition: color .2s; }
 .tab-port  { font-size: 9px; color: var(--dim); }
 .app-tab.active .tab-name { color: var(--tc, var(--app)); }
+.instance-bar { margin: -8px 0 20px; }
+.instance-chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.inst-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--panel); color: var(--muted); cursor: pointer; transition: border-color .15s, color .15s; }
+.inst-chip:hover { border-color: var(--border-hi); }
+.inst-chip.active { border-color: var(--app); color: var(--fg, #e6e6e6); background: color-mix(in srgb, var(--app) 8%, var(--panel)); }
+.inst-chip .inst-default { font-size: 8px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.inst-chip .inst-x { font-size: 12px; opacity: .55; padding: 0 1px; }
+.inst-chip .inst-x:hover { opacity: 1; color: var(--err); }
+.inst-add { font-size: 11px; padding: 5px 10px; border-radius: 999px; border: 1px dashed var(--border-hi);
+  background: none; color: var(--muted); cursor: pointer; }
+.inst-add:hover { color: var(--app); border-color: var(--app); }
+.instance-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.instance-form input { flex: 1 1 160px; padding: 7px 10px; font-size: 11px; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 6px; color: var(--fg, #e6e6e6); font-family: inherit; }
 .phases { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; }
 .phase {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
@@ -380,6 +395,19 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     </button>
   </div>
 
+  <!-- ── Instance selector (multiple instances of the current app) ───────────── -->
+  <div class="instance-bar" id="instanceBar">
+    <div class="instance-chips" id="instanceChips"></div>
+    <div class="instance-form" id="instanceForm" style="display:none">
+      <input id="instName"      placeholder="Name (e.g. 4K)">
+      <input id="instUrl"       placeholder="URL  http://host:port[/urlbase]">
+      <input id="instApikey"    placeholder="API Key" type="password">
+      <input id="instContainer" placeholder="Container name (optional)">
+      <button class="btn btn-primary btn-sm" id="instSaveBtn" onclick="saveInstance()">Save</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeInstanceForm()">Cancel</button>
+    </div>
+  </div>
+
   <div class="phases">
     <div class="phase" id="ph1"><div class="phase-num">1</div><div class="phase-label">Preflight</div></div>
     <div class="phase" id="ph2"><div class="phase-num">2</div><div class="phase-label">Shutdown</div></div>
@@ -566,7 +594,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       <div class="form-grid" style="margin-bottom:10px">
         <div class="field"><label>Name</label><input id="schedName" placeholder="Sonarr nightly"></div>
         <div class="field"><label>App</label>
-          <select id="schedApp">
+          <select id="schedApp" onchange="syncSchedInstances()">
             <option value="sonarr">Sonarr</option>
             <option value="radarr">Radarr</option>
             <option value="lidarr">Lidarr</option>
@@ -576,6 +604,9 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
             <option value="whisparr">Whisparr</option>
             <option value="bazarr">Bazarr</option>
           </select>
+        </div>
+        <div class="field"><label>Instance</label>
+          <select id="schedInstance"><option value="">Default</option></select>
         </div>
       </div>
       <div class="field" style="margin-bottom:10px">
@@ -812,7 +843,20 @@ function handle401() {
 // Cache of /api/apps results keyed by app, so syncShutdownWarning() and
 // submitRepair() can read the discovered container_name + db_path without
 // having to expose them as form fields.
-let _appsByName = {};
+let _appsByName = {};            // app → its default/first instance (back-compat)
+let _instancesByApp = {};        // app → [instance, …]
+let currentInstanceId = null;    // selected instance id for currentApp
+let _instEditId = null;          // id being edited in the inline form (null = add)
+
+// The instance currently selected for the active app (default if unset).
+function currentInstance() {
+  const list = _instancesByApp[currentApp] || [];
+  return list.find(i => i.id === currentInstanceId)
+      || list.find(i => i.default)
+      || list[0]
+      || _appsByName[currentApp]
+      || null;
+}
 
 function updatePlaceholders(app) {
   const cfg = APPS[app];
@@ -827,7 +871,7 @@ function syncShutdownWarning() {
   const cfg = APPS[currentApp];
   const pretty = cfg.name.charAt(0) + cfg.name.slice(1).toLowerCase();
   const api = cfg.api ?? 'v3';   // '' (Bazarr) is intentional, don't coerce
-  const container = (_appsByName[currentApp]?.container_name || '').trim();
+  const container = (currentInstance()?.container_name || '').trim();
   const title = document.getElementById('warnTitle');
   const body  = document.getElementById('warnBody');
 
@@ -897,7 +941,7 @@ function boot() {
   const skip = document.getElementById('skipShutdownCheck');
   const hint = document.getElementById('skipShutdownHint');
   window.syncHint = () => {
-    const container = (_appsByName[currentApp]?.container_name || '').trim();
+    const container = (currentInstance()?.container_name || '').trim();
     if (!skip.checked) { hint.style.display = 'none'; return; }
     hint.style.display = 'block';
     if (container) {
@@ -954,14 +998,14 @@ let webKeyDebounce = null;
 // Fetch env-configured connections and pre-fill the form for the current app.
 // Returns a promise resolving to true on success, false on auth failure / error.
 function loadEnvConfig({ logErrors = false } = {}) {
-  return fetch('/api/apps', { headers: authHeaders() })
+  return fetch('/api/instances', { headers: authHeaders() })
     .then(r => {
       if (r.status === 401) { if (logErrors) handle401(); return null; }
       return r.ok ? r.json() : null;
     })
-    .then(apps => {
-      if (!apps) return false;
-      applyEnvConfig(apps, currentApp);
+    .then(items => {
+      if (!items) return false;
+      applyInstances(items);
       lastLoadedKey = getWebKey();
       return true;
     })
@@ -998,23 +1042,119 @@ function onWebKeyInput() {
 // Pull the auto-discovered + env-configured per-app values into the form.
 // The user only has to type the apikey (URL is auto-discovered via Docker).
 // Called on initial load and on every app switch.
-function applyEnvConfig(apps, app) {
-  _appsByName = Object.fromEntries((apps||[]).map(a => [a.app, a]));
-  const a = _appsByName[app];
+function applyInstances(items) {
+  _instancesByApp = {};
+  for (const it of (items || [])) (_instancesByApp[it.app] ||= []).push(it);
+  for (const k in _instancesByApp) {
+    _instancesByApp[k].sort((a, b) =>
+      (b.default ? 1 : 0) - (a.default ? 1 : 0) || a.name.localeCompare(b.name));
+  }
+  // Back-compat: _appsByName[app] = its default (or first) instance.
+  _appsByName = {};
+  for (const k in _instancesByApp) {
+    const list = _instancesByApp[k];
+    _appsByName[k] = list.find(i => i.default) || list[0];
+  }
+  // Keep the current selection valid for the active app.
+  const list = _instancesByApp[currentApp] || [];
+  if (!list.find(i => i.id === currentInstanceId)) {
+    currentInstanceId = (list.find(i => i.default) || list[0])?.id || null;
+  }
+  renderInstanceSelector();
+  applyInstanceToForm(currentInstance());
+}
+
+function applyInstanceToForm(a) {
   if (!a) { renderDiscoveryHints({ url:'', discovered:false, missing:true }); return; }
-  if (a.url)    document.getElementById('appUrl').value = a.url;
-  if (a.apikey) document.getElementById('apikey').value = a.apikey;
+  document.getElementById('appUrl').value = a.url || '';
+  document.getElementById('apikey').value = a.apikey || '';
   renderDiscoveryHints(a);
   syncShutdownWarning();
-  const loaded = [];
-  if (a.url)            loaded.push('url');
-  if (a.container_name) loaded.push('container');
-  if (a.db_path)        loaded.push('db_path');
-  if (a.apikey)         loaded.push('apikey');
-  if (loaded.length) {
-    const src = a.discovered ? 'Docker discovery' : 'environment';
-    logLine('SYS', `${app.toUpperCase()} config loaded from ${src}: ${loaded.join(', ')}`, 'sys');
+}
+
+// ── Instance selector ───────────────────────────────────────────────────────────
+function renderInstanceSelector() {
+  const wrap = document.getElementById('instanceChips');
+  if (!wrap) return;
+  const list = _instancesByApp[currentApp] || [];
+  const chips = list.map(i => {
+    const active = i.id === currentInstanceId ? ' active' : '';
+    const tag = i.default ? '<span class="inst-default">default</span>' : '';
+    const del = i.default ? ''
+      : `<span class="inst-x" title="Delete" onclick="event.stopPropagation();deleteInstance('${i.id}')">✕</span>`;
+    const edit = i.default ? ''
+      : `<span class="inst-x" title="Edit" onclick="event.stopPropagation();editInstance('${i.id}')">✎</span>`;
+    return `<span class="inst-chip${active}" onclick="selectInstance('${i.id}')" title="${escHtml(i.url||'')}">`
+         + `${escHtml(i.name)} ${tag}${edit}${del}</span>`;
+  }).join('');
+  const add = `<button class="inst-add" onclick="openInstanceForm()">+ Add instance</button>`;
+  // Only show the bar when there's something to choose/add (always has +Add).
+  wrap.innerHTML = chips + add;
+}
+
+function selectInstance(id) {
+  if (running) return;
+  currentInstanceId = id;
+  closeInstanceForm();
+  renderInstanceSelector();
+  applyInstanceToForm(currentInstance());
+  refreshRunMeta(); renderTrends();
+  const inst = currentInstance();
+  logLine('SYS', `Instance: ${inst?.name || id}`, 'sys');
+}
+
+function openInstanceForm(edit) {
+  _instEditId = edit ? edit.id : null;
+  document.getElementById('instName').value      = edit ? edit.name : '';
+  document.getElementById('instUrl').value       = edit ? (edit.url || '') : '';
+  document.getElementById('instApikey').value    = edit ? (edit.apikey || '') : '';
+  document.getElementById('instContainer').value = edit ? (edit.container_name || '') : '';
+  document.getElementById('instSaveBtn').textContent = edit ? 'Update' : 'Save';
+  document.getElementById('instanceForm').style.display = 'flex';
+}
+function closeInstanceForm() {
+  _instEditId = null;
+  const f = document.getElementById('instanceForm');
+  if (f) f.style.display = 'none';
+}
+function editInstance(id) {
+  const inst = (_instancesByApp[currentApp] || []).find(i => i.id === id);
+  if (inst) openInstanceForm(inst);
+}
+async function saveInstance() {
+  const payload = {
+    app:            currentApp,
+    name:           document.getElementById('instName').value.trim(),
+    url:            document.getElementById('instUrl').value.trim(),
+    apikey:         document.getElementById('instApikey').value.trim(),
+    container_name: document.getElementById('instContainer').value.trim(),
+  };
+  if (!payload.name || !payload.url) {
+    logLine('WARN', 'Instance needs at least a name and URL.', 'warn'); return;
   }
+  const editing = _instEditId;
+  const url = editing ? `/api/instances/${editing}` : '/api/instances';
+  const res = await fetch(url, {
+    method: editing ? 'PUT' : 'POST',
+    headers: authHeaders(), body: JSON.stringify(payload),
+  });
+  if (res.status === 401) { handle401(); return; }
+  if (!res.ok) { const e = await res.json().catch(()=>({})); logLine('ERR', e.error || 'Failed to save instance.', 'err'); return; }
+  const saved = await res.json();
+  closeInstanceForm();
+  logLine('SYS', `Instance ${editing ? 'updated' : 'added'}: ${saved.name}`, 'sys');
+  await loadEnvConfig({ logErrors: true });
+  if (!editing && saved.id) selectInstance(saved.id);
+}
+async function deleteInstance(id) {
+  const inst = (_instancesByApp[currentApp] || []).find(i => i.id === id);
+  if (!confirm(`Delete instance "${inst?.name || id}"? Its backups are kept.`)) return;
+  const res = await fetch(`/api/instances/${id}`, { method: 'DELETE', headers: authHeaders() });
+  if (res.status === 401) { handle401(); return; }
+  if (!res.ok) { logLine('ERR', 'Failed to delete instance.', 'err'); return; }
+  logLine('SYS', `Instance deleted: ${inst?.name || id}`, 'sys');
+  if (currentInstanceId === id) currentInstanceId = null;
+  await loadEnvConfig({ logErrors: true });
 }
 
 function renderDiscoveryHints(a) {
@@ -1057,6 +1197,12 @@ function switchApp(app) {
   // Clear app-specific fields so the previous app's values don't carry over
   document.getElementById('appUrl').value  = '';
   document.getElementById('apikey').value  = '';
+
+  // Reset to the new app's default instance and re-render the selector from
+  // cached data immediately (loadEnvConfig below refreshes it).
+  currentInstanceId = null;
+  closeInstanceForm();
+  renderInstanceSelector();
 
   // Reset UI state
   resetPhases();
@@ -1232,7 +1378,7 @@ async function detectContainers() {
 // ── Connection test ───────────────────────────────────────────────────────────
 async function testConnection() {
   const btn = document.getElementById('testBtn');
-  const url     = (document.getElementById('appUrl').value.trim()) || (_appsByName[currentApp]?.url || '');
+  const url     = (document.getElementById('appUrl').value.trim()) || (currentInstance()?.url || '');
   const apikey  = document.getElementById('apikey').value.trim();
   if (!url)    { logLine('ERR','No URL — set one or click "Detect *arr containers".','err'); return; }
   if (!apikey) { logLine('ERR','API key required.','err'); return; }
@@ -1269,6 +1415,7 @@ async function startRepair() {
   if (!apikey) { logLine('ERR','API key is required.','err'); return; }
   const payload = {
     app: currentApp,
+    instance_id: currentInstanceId || currentApp,
     url: document.getElementById('appUrl').value.trim(),
     apikey,
     ops: [...selectedOps],
@@ -1601,6 +1748,7 @@ function openScheduleForm(existing /* nullable */) {
   editingScheduleId = existing?.id || null;
   document.getElementById('schedName').value           = existing?.name || '';
   document.getElementById('schedApp').value            = existing?.app || currentApp;
+  syncSchedInstances(existing?.instance_id || '');
   document.getElementById('schedCron').value           = existing?.cron || '0 3 * * *';
   document.getElementById('schedSkipIfClean').checked  = existing ? !!existing.skip_if_clean : true;
   document.getElementById('schedDryRun').checked       = !!existing?.dry_run;
@@ -1620,12 +1768,25 @@ function closeScheduleForm() {
   document.getElementById('addSchedBtn').disabled = false;
 }
 
+// Populate the schedule's Instance dropdown from the chosen app's instances.
+function syncSchedInstances(selectId) {
+  const appName = document.getElementById('schedApp').value;
+  const sel = document.getElementById('schedInstance');
+  const list = _instancesByApp[appName] || [];
+  const extras = list.filter(i => !i.default);
+  const opts = ['<option value="">Default</option>']
+    .concat(extras.map(i => `<option value="${escHtml(i.id)}">${escHtml(i.name)}</option>`));
+  sel.innerHTML = opts.join('');
+  if (selectId !== undefined) sel.value = selectId || '';
+}
+
 async function saveSchedule() {
   const ops = [...document.querySelectorAll('.sched-op:checked')].map(cb => cb.value);
   if (!ops.length) { logLine('ERR','Select at least one op.','err'); return; }
   const payload = {
     name:          document.getElementById('schedName').value.trim(),
     app:           document.getElementById('schedApp').value,
+    instance_id:   document.getElementById('schedInstance').value,
     cron:          document.getElementById('schedCron').value.trim(),
     ops,
     skip_if_clean: document.getElementById('schedSkipIfClean').checked,
@@ -1680,7 +1841,7 @@ function renderScheduleRow(s) {
       <div style="width:6px;align-self:stretch;background:${cfg.color};border-radius:2px"></div>
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:center;gap:8px"><strong>${escHtml(s.name)}</strong>
-          <span style="color:var(--muted);font-size:10px">${s.app}</span>
+          <span style="color:var(--muted);font-size:10px">${s.app}${s.instance_id ? ' › ' + escHtml(s.instance_id) : ''}</span>
           ${s.enabled ? '' : '<span style="color:var(--warn);font-size:9px">DISABLED</span>'}
           ${s.skip_if_clean ? '<span style="color:var(--muted);font-size:9px" title="Probe will skip the run if quick_check + foreign_key_check are both clean">skip-if-clean</span>' : ''}
           ${s.dry_run ? '<span style="color:var(--dry);font-size:9px">DRY RUN</span>' : ''}
