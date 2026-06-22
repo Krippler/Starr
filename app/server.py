@@ -1152,7 +1152,9 @@ def _apply_instance(cfg: dict) -> str | None:
     """If the request names an instance_id, overlay that instance's connection
     onto cfg (request body still wins per field). Sets cfg['label'] — the
     filename/history key — to the instance id (or the bare app name for the
-    env/discovery default). Returns an error string or None."""
+    env/discovery default). UI-saved per-instance overrides win over the
+    instance's own stored fields and over env/discovery; the request body
+    still wins over both. Returns an error string or None."""
     iid = (cfg.get("instance_id") or "").strip().lower()
     if iid and iid not in APP_DEFAULTS:
         inst = _instances.get(iid)
@@ -1162,6 +1164,12 @@ def _apply_instance(cfg: dict) -> str | None:
         for k in ("url", "apikey", "container_name", "db_path"):
             if inst.get(k) and not cfg.get(k):
                 cfg[k] = inst[k]
+    # Apply per-instance UI overrides (for both defaults and named extras).
+    if iid:
+        ov = _instances.get_override(iid)
+        for k, v in ov.items():
+            if v and not cfg.get(k):
+                cfg[k] = v
     cfg["label"] = iid or (cfg.get("app") or "").lower()
     return None
 
@@ -1470,14 +1478,17 @@ _instances = InstanceStore(app.config["BACKUP_DIR"] / ".starr-instances.json",
 
 def _synthesized_defaults() -> list[dict]:
     """The env/discovery-derived default instance for each app (id == app),
-    in the same shape the UI uses for stored instances."""
+    in the same shape the UI uses for stored instances. User-typed
+    overrides from the dashboard win over env/discovery so a key typed in
+    the UI survives reloads and reaches scheduled runs."""
     discovered = {d["app"]: d for d in (_discovery_cache.get("apps") or [])}
     browser_host = _request_host_only()
     out = []
     for name in APP_DEFAULTS:
         upper = name.upper()
-        apikey = app.config.get(f"{upper}_APIKEY", "")
-        env_url = app.config.get(f"{upper}_URL", "")
+        ov = _instances.get_override(name)
+        apikey = ov.get("apikey") or app.config.get(f"{upper}_APIKEY", "")
+        env_url = ov.get("url") or app.config.get(f"{upper}_URL", "")
         disc = discovered.get(name, {})
         display_url = env_url
         if not display_url and disc.get("published_port"):
@@ -1493,11 +1504,12 @@ def _synthesized_defaults() -> list[dict]:
             "url":            display_url,
             "internal_url":   disc.get("url") or "",
             "apikey":         apikey,
-            "container_name": disc.get("container_name") or "",
-            "db_path":        disc.get("db_path") or "",
+            "container_name": ov.get("container_name") or disc.get("container_name") or "",
+            "db_path":        ov.get("db_path") or disc.get("db_path") or "",
             "default":        True,
             "discovered":     bool(disc),
             "configured":     bool(apikey),
+            "overridden":     bool(ov),
         })
     return out
 
@@ -1540,6 +1552,26 @@ def api_instances_delete(iid):
     if not _instances.delete(iid):
         return jsonify({"error": "not found (defaults are env/discovery-managed)"}), 404
     return jsonify({"status": "deleted", "id": iid})
+
+
+@app.route("/api/instances/<iid>/credentials", methods=["PUT"])
+@require_api_key
+def api_instances_set_credentials(iid):
+    """Persist UI-entered credentials (apikey / url / container_name /
+    db_path) for an instance — works for both the env/discovery default
+    (id == app name) and named extras. Lets a user enter the apikey in
+    the dashboard once and have it survive reloads and scheduled runs
+    without having to set the env var."""
+    iid_l = (iid or "").strip().lower()
+    if not iid_l:
+        return jsonify({"error": "instance id required"}), 400
+    if iid_l not in APP_DEFAULTS and not _instances.get(iid_l):
+        return jsonify({"error": "unknown instance"}), 404
+    try:
+        ov = _instances.set_override(iid_l, request.get_json(force=True) or {})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({"status": "ok", "id": iid_l, "override": ov})
 
 
 @app.route("/api/history")

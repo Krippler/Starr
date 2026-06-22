@@ -1175,3 +1175,53 @@ def test_history_endpoints_instance_filter(client, tmp_path):
     assert est["seconds"] == 22 and est["instance"] == "sonarr-4k"
     # Neither app nor instance → 400
     assert client.get("/api/history/estimate").status_code == 400
+
+
+# ── UI-saved credentials (overrides) ────────────────────────────────────────────
+def test_instance_overrides_round_trip(tmp_path):
+    from instances import InstanceStore
+    st = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    assert st.get_override("sonarr") == {}
+    st.set_override("sonarr", {"apikey": "k", "url": "http://h:8989", "container_name": ""})
+    ov = st.get_override("sonarr")
+    assert ov["apikey"] == "k" and ov["url"] == "http://h:8989"
+    assert "container_name" not in ov   # blanks stripped
+    # persists across reloads
+    st2 = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    assert st2.get_override("sonarr")["apikey"] == "k"
+    # clearing removes it
+    st2.set_override("sonarr", {"apikey": ""})
+    assert st2.get_override("sonarr") == {}
+
+
+def test_credentials_endpoint(client, tmp_path):
+    from instances import InstanceStore
+    srv._instances = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    r = client.put("/api/instances/sonarr/credentials",
+                   data=json.dumps({"apikey": "ui-key", "url": "http://h:8989"}),
+                   content_type="application/json")
+    assert r.status_code == 200
+    body = json.loads(r.data)
+    assert body["override"]["apikey"] == "ui-key"
+    # synthesized default now reflects the override
+    defaults = srv._synthesized_defaults()
+    son = next(d for d in defaults if d["id"] == "sonarr")
+    assert son["apikey"] == "ui-key"
+    assert son["overridden"] is True
+    # unknown instance → 404
+    assert client.put("/api/instances/bogus/credentials",
+                      data=json.dumps({"apikey": "x"}),
+                      content_type="application/json").status_code == 404
+
+
+def test_apply_instance_uses_override_when_no_apikey(tmp_path):
+    from instances import InstanceStore
+    srv._instances = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    srv._instances.set_override("sonarr", {"apikey": "ui-key"})
+    cfg = {"instance_id": "sonarr"}
+    assert srv._apply_instance(cfg) is None
+    assert cfg["apikey"] == "ui-key"     # override surfaced for scheduled runs
+    # explicit body still wins
+    cfg2 = {"instance_id": "sonarr", "apikey": "body-key"}
+    srv._apply_instance(cfg2)
+    assert cfg2["apikey"] == "body-key"

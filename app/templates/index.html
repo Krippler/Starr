@@ -443,6 +443,11 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           Detect *arr containers
         </button>
+        <button class="btn btn-ghost btn-sm" onclick="saveConnection()" id="saveConnBtn"
+                title="Persist the URL + API Key for this instance so schedules and reloads use them without setting env vars.">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+          Save Credentials
+        </button>
         <button class="btn btn-ghost btn-sm" onclick="testConnection()" id="testBtn">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Test Connection
@@ -1394,6 +1399,32 @@ async function detectContainers() {
 }
 
 // ── Connection test ───────────────────────────────────────────────────────────
+async function saveConnection() {
+  const iid = currentInstanceId || currentApp;
+  const url    = document.getElementById('appUrl').value.trim();
+  const apikey = document.getElementById('apikey').value.trim();
+  if (!url && !apikey) {
+    logLine('WARN', 'Nothing to save — fill in URL and/or API Key first.', 'warn'); return;
+  }
+  const btn = document.getElementById('saveConnBtn');
+  btn.disabled = true; const oldHTML = btn.innerHTML; btn.textContent = 'Saving…';
+  try {
+    const res = await fetch(`/api/instances/${encodeURIComponent(iid)}/credentials`, {
+      method: 'PUT', headers: authHeaders(),
+      body: JSON.stringify({ url, apikey }),
+    });
+    if (res.status === 401) { handle401(); return; }
+    if (!res.ok) {
+      const e = await res.json().catch(()=>({}));
+      logLine('ERR', e.error || 'Failed to save credentials.', 'err'); return;
+    }
+    logLine('OK', `Saved credentials for ${iid} — schedules will use them.`, 'ok');
+    await loadEnvConfig({ logErrors: false });
+  } finally {
+    btn.disabled = false; btn.innerHTML = oldHTML;
+  }
+}
+
 async function testConnection() {
   const btn = document.getElementById('testBtn');
   const url     = (document.getElementById('appUrl').value.trim()) || (currentInstance()?.url || '');
@@ -1867,6 +1898,9 @@ function renderScheduleRow(s) {
         <div style="color:var(--muted);font-size:10px;margin-top:2px">
           <code style="background:rgba(255,255,255,.06);padding:1px 5px;border-radius:3px">${escHtml(s.cron)}</code> · next: ${escHtml(next)} · last: ${escHtml(last)} <span style="color:${statusColor}">${escHtml(lastStatus)}</span>
         </div>
+        ${s.last_run?.message && lastStatus === 'error'
+          ? `<div style="color:var(--err);font-size:10px;margin-top:2px">${escHtml(s.last_run.message)}</div>`
+          : ''}
         <div style="margin-top:4px;display:flex;gap:4px;flex-wrap:wrap">${ops}</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:4px">
