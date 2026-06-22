@@ -65,7 +65,7 @@ docker run -d \
 
 | Tag | Use |
 |---|---|
-| `1.1.0` | exact version — recommended pin for production |
+| `1.1.1` | exact version — recommended pin for production |
 | `1.1` / `1` | floating minor / major |
 | `latest` | newest release |
 
