@@ -1225,3 +1225,18 @@ def test_apply_instance_uses_override_when_no_apikey(tmp_path):
     cfg2 = {"instance_id": "sonarr", "apikey": "body-key"}
     srv._apply_instance(cfg2)
     assert cfg2["apikey"] == "body-key"
+
+
+def test_apply_instance_default_uses_override_when_id_empty(tmp_path):
+    """Regression: scheduled runs targeting the env/discovery default carry
+    instance_id="" and must still pick up the UI-saved credentials override
+    (previously skipped, causing "apikey is required" on Run now)."""
+    from instances import InstanceStore
+    srv._instances = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    srv._instances.set_override("prowlarr", {"apikey": "ui-key"})
+    # This is what schedules._fire produces for a default-instance schedule:
+    cfg = {"app": "prowlarr", "instance_id": "", "ops": ["integrity"]}
+    assert srv._apply_instance(cfg) is None
+    assert cfg["apikey"] == "ui-key"
+    # Sanity: label still reflects the default (= app name).
+    assert cfg["label"] == "prowlarr"

@@ -1164,9 +1164,15 @@ def _apply_instance(cfg: dict) -> str | None:
         for k in ("url", "apikey", "container_name", "db_path"):
             if inst.get(k) and not cfg.get(k):
                 cfg[k] = inst[k]
-    # Apply per-instance UI overrides (for both defaults and named extras).
-    if iid:
-        ov = _instances.get_override(iid)
+    # Apply per-instance UI overrides. The lookup key is the explicit
+    # instance_id when given, otherwise the bare app name — that's the id of
+    # the env/discovery default instance. Without this fallback, scheduled
+    # runs that target the default (which carry instance_id="") would skip
+    # the override the user just saved in the dashboard and fail with the
+    # generic "apikey is required" error.
+    ov_key = iid or (cfg.get("app") or "").lower()
+    if ov_key:
+        ov = _instances.get_override(ov_key)
         for k, v in ov.items():
             if v and not cfg.get(k):
                 cfg[k] = v
