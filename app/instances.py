@@ -37,22 +37,72 @@ class InstanceStore:
 
     def __init__(self, path: Path, valid_apps):
         self.path = Path(path)
+        # Per-instance credential overrides (apikey / url / container_name /
+        # db_path) that the user typed into the dashboard. Lets the synthesized
+        # env-derived default instance pick up a UI-entered apikey so it
+        # survives reloads and is available to scheduled runs.
+        self.overrides_path = self.path.with_name(".starr-instance-overrides.json")
         self.valid_apps = tuple(valid_apps)
         self._lock = threading.RLock()
         self._items: list[dict] = []
+        self._overrides: dict[str, dict] = {}
         self.load()
 
     def load(self) -> None:
         with self._lock:
-            if not self.path.exists():
+            if self.path.exists():
+                try:
+                    data = json.loads(self.path.read_text())
+                    self._items = data if isinstance(data, list) else []
+                except Exception:
+                    log.exception("Failed to read %s; starting empty", self.path)
+                    self._items = []
+            else:
                 self._items = []
-                return
-            try:
-                data = json.loads(self.path.read_text())
-                self._items = data if isinstance(data, list) else []
-            except Exception:
-                log.exception("Failed to read %s; starting empty", self.path)
-                self._items = []
+            if self.overrides_path.exists():
+                try:
+                    data = json.loads(self.overrides_path.read_text())
+                    self._overrides = data if isinstance(data, dict) else {}
+                except Exception:
+                    log.exception("Failed to read %s; starting empty",
+                                  self.overrides_path)
+                    self._overrides = {}
+            else:
+                self._overrides = {}
+
+    def _save_overrides(self) -> None:
+        with self._lock:
+            tmp = self.overrides_path.with_suffix(self.overrides_path.suffix + ".tmp")
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            tmp.write_text(json.dumps(self._overrides, indent=2))
+            tmp.replace(self.overrides_path)
+
+    def get_override(self, iid: str) -> dict:
+        """Per-instance UI-entered credentials. Empty dict if none."""
+        with self._lock:
+            return dict(self._overrides.get((iid or "").lower(), {}))
+
+    def set_override(self, iid: str, fields: dict) -> dict:
+        """Persist apikey/url/container_name/db_path overrides for an instance
+        (default or extra). Only known keys are stored; blanks are stripped so
+        clearing a field falls back to env/discovery rather than masking it
+        with an empty string."""
+        iid = (iid or "").lower()
+        if not iid:
+            raise ValueError("instance id required")
+        clean = {
+            k: (fields.get(k) or "").strip()
+            for k in ("apikey", "url", "container_name", "db_path")
+            if k in fields
+        }
+        clean = {k: v for k, v in clean.items() if v}
+        with self._lock:
+            if clean:
+                self._overrides[iid] = clean
+            else:
+                self._overrides.pop(iid, None)
+        self._save_overrides()
+        return dict(self._overrides.get(iid, {}))
 
     def save(self) -> None:
         with self._lock:
