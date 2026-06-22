@@ -3,6 +3,25 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.1.1] — 2026-06-22
+
+Patch release fixing credential handling for scheduled repairs.
+
+### Fixed
+- **API keys typed in the dashboard now persist and reach scheduled runs**
+  (#40) — previously the API Key field was form-only state, so a schedule that
+  fired with no `*_APIKEY` env var set failed with `apikey is required`. The UI
+  now has a **Save Credentials** button that persists the URL + API Key per
+  instance to `.starr-instance-overrides.json`; both manual and scheduled runs
+  pick them up. New endpoint: `PUT /api/instances/<id>/credentials`.
+- **Default-instance schedules now read the saved override** (#41) — scheduled
+  runs targeting the env/discovery default carry an empty `instance_id`, and the
+  override lookup was skipped for them. It now falls back to the app name (the
+  default instance's id), so `Run now` succeeds after saving credentials.
+- **Schedule rows surface the failure reason** (#40) — when a schedule's last
+  status is `error`, the actual message is shown under the row instead of just
+  the word "error".
+
 ## [1.1.0] — 2026-06-21
 
 A large feature drop centred on **multiple instances per app** plus a new
