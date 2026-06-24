@@ -138,6 +138,14 @@ header {
 }
 .panel.collapsible.is-collapsed .panel-title .chev { transform: rotate(-90deg); }
 .panel.collapsible .panel-title .chev { opacity: .55; }
+/* Inline summary in a collapsible panel's title (e.g. "3 selected" on
+   Repair Operations) so users see state without having to expand. */
+.ops-summary {
+  margin-left: 8px; font-size: 9px; font-weight: 400; letter-spacing: 0;
+  text-transform: none; color: var(--muted);
+  padding: 2px 7px; border-radius: 10px;
+  background: rgba(255,255,255,.04); border: 1px solid var(--border);
+}
 .panel-title { display: flex; align-items: center; gap: 8px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--app); font-weight: 500; transition: color .4s; }
 .panel-body { padding: 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
@@ -500,40 +508,6 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-head">
-      <div class="panel-title">
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 1 0 4.93 19.07"/></svg>
-        Repair Operations
-      </div>
-      <div style="display:flex;gap:12px">
-        <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer">
-          <input type="checkbox" id="dryRunCheck" style="accent-color:var(--dry)">
-          <span style="color:var(--dry)">Dry Run</span>
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer"
-               title="Docker/Unraid: a container restart policy (restart: unless-stopped) brings the app back seconds after its shutdown API stops it. The reliable flow is to stop the app's CONTAINER yourself, then enable this so Starr repairs the idle DB without trying to shut the app down.">
-          <input type="checkbox" id="skipShutdownCheck">
-          Skip Shutdown
-        </label>
-      </div>
-    </div>
-    <div class="panel-body">
-      <div id="skipShutdownHint" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px">
-        <!-- updated by syncHint() based on whether a container name is set -->
-      </div>
-      <div class="ops-header">
-        <span style="font-size:10px;color:var(--muted)" id="selCount">0 operations selected</span>
-        <div style="display:flex;gap:10px">
-          <button class="link-btn accent" onclick="selectSafe()">Select Safe</button>
-          <button class="link-btn accent" onclick="selectAll()">All</button>
-          <button class="link-btn muted"  onclick="clearSel()">Clear</button>
-        </div>
-      </div>
-      <div class="ops-grid" id="opsGrid"></div>
-    </div>
-  </div>
-
   <div class="warn-box">
     <div class="warn-box-icon">⚠️</div>
     <div class="warn-box-body">
@@ -572,6 +546,42 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       <div class="log-line"><span class="log-ts">00:00:00</span><span class="log-tag sys">SYS</span><span class="log-msg dim">Starr DB Repair ready. Pick an app tab, choose an instance, and click Run Repair.</span></div>
       <div class="log-line"><span class="log-ts">00:00:00</span><span class="log-tag sys">SYS</span><span class="log-msg dim">Live job output streams here via SSE — scheduled runs appear in this log too.</span></div>
       <div class="log-line" id="termCursor"><span class="log-ts" id="cursorTs">00:00:00</span><span class="log-tag sys">$</span><span class="log-msg"><span class="cursor" id="cursorBlink"></span></span></div>
+    </div>
+  </div>
+
+  <!-- ── Repair Operations (collapsible, just above Run Repair) ─────────────── -->
+  <div class="panel collapsible is-collapsed" data-section="ops">
+    <div class="panel-head" onclick="toggleSection('ops', event)">
+      <div class="panel-title">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93A10 10 0 1 0 4.93 19.07"/></svg>
+        Repair Operations
+        <span id="selCount" class="ops-summary">0 selected</span>
+      </div>
+      <div style="display:flex;gap:12px">
+        <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer">
+          <input type="checkbox" id="dryRunCheck" style="accent-color:var(--dry)">
+          <span style="color:var(--dry)">Dry Run</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer"
+               title="Docker/Unraid: a container restart policy (restart: unless-stopped) brings the app back seconds after its shutdown API stops it. The reliable flow is to stop the app's CONTAINER yourself, then enable this so Starr repairs the idle DB without trying to shut the app down.">
+          <input type="checkbox" id="skipShutdownCheck">
+          Skip Shutdown
+        </label>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div id="skipShutdownHint" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px">
+        <!-- updated by syncHint() based on whether a container name is set -->
+      </div>
+      <div class="ops-header">
+        <div style="display:flex;gap:10px">
+          <button class="link-btn accent" onclick="selectSafe()">Select Safe</button>
+          <button class="link-btn accent" onclick="selectAll()">All</button>
+          <button class="link-btn muted"  onclick="clearSel()">Clear</button>
+        </div>
+      </div>
+      <div class="ops-grid" id="opsGrid"></div>
     </div>
   </div>
 
@@ -1564,8 +1574,7 @@ function renderOps() {
       <div class="op-name">${op.name}</div>
       <div class="op-desc">${op.desc}${!op.safe?' <span class="op-warn-tag">⚠ destructive</span>':''}</div>
     </div>`).join('');
-  document.getElementById('selCount').textContent =
-    `${selectedOps.size} operation${selectedOps.size!==1?'s':''} selected`;
+  document.getElementById('selCount').textContent = `${selectedOps.size} selected`;
 }
 function toggleOp(id) { if(!running){selectedOps.has(id)?selectedOps.delete(id):selectedOps.add(id);renderOps();} }
 function selectSafe() { APPS[currentApp].ops.filter(o=>o.safe).forEach(o=>selectedOps.add(o.id)); renderOps(); }
