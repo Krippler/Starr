@@ -16,7 +16,7 @@
 - **Browser dashboard** — no SSH required
 - **Live log streaming** via Server-Sent Events (SSE)
 - **Safe shutdown sequence** — calls `/api/v3/system/shutdown` and polls until confirmed offline before touching the DB
-- **Auto-backup** before every repair, with retention adjustable from the dashboard up to 1 year (or *Forever*)
+- **Auto-backup** before every repair, with retention adjustable from the dashboard up to 1 year (or *Forever*) — global or per-instance, so a daily-backed Sonarr can keep 14 days while a weekly Sonarr-4K keeps a year
 - **6 SQLite operations**: integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE
 - **Dry-run mode** — preview every step without making changes
 - **Run history** — last-run pill, pre-repair time estimate, per-app DB-size / duration trend charts, and a persistent run log

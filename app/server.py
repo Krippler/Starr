@@ -496,8 +496,11 @@ def _step_backup(cfg, db_path: str) -> str | None:
         emit("OK", f"Backup created ({out_mb:.1f} MB)", "ok")
 
     # Prune old backups (match both .db and .db.zst for this instance label).
-    # UI-saved retention wins; env var is the boot fallback.
-    max_days = _settings.max_backup_age_days(app.config["MAX_BACKUP_AGE_DAYS"])
+    # Per-instance override wins, then saved global, then the env-var boot
+    # default. The glob is already scoped to this label, so a longer-retention
+    # neighbour (e.g. sonarr-4k) can't be pruned by a shorter sibling.
+    max_days = _settings.max_backup_age_days(
+        app.config["MAX_BACKUP_AGE_DAYS"], instance=label)
     if max_days > 0:
         cutoff  = time.time() - max_days * 86400
         removed = 0
@@ -1529,10 +1532,22 @@ def _synthesized_defaults() -> list[dict]:
 @require_api_key
 def api_instances():
     """All instances: synthesized env/discovery defaults (one per configured
-    app, id == app) merged with user-added extras, grouped under each app."""
+    app, id == app) merged with user-added extras, grouped under each app.
+
+    Each item also reports its retention picture so the UI can render the
+    "keep for" picker per instance: `retention_days` is the override (or
+    None if inherited), and `retention_effective_days` is what would
+    actually be applied at prune time."""
     items = _synthesized_defaults()
     for s in _instances.all():
         items.append({**s, "default": False, "configured": bool(s.get("apikey"))})
+    env_default = app.config["MAX_BACKUP_AGE_DAYS"]
+    per_inst = _settings.instance_retention_all()
+    for it in items:
+        iid = it["id"]
+        it["retention_days"] = per_inst.get(iid)        # None = inherit
+        it["retention_effective_days"] = _settings.max_backup_age_days(
+            env_default, instance=iid)
     return jsonify(items)
 
 
@@ -1583,6 +1598,31 @@ def api_instances_set_credentials(iid):
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"status": "ok", "id": iid_l, "override": ov})
+
+
+@app.route("/api/instances/<iid>/retention", methods=["PUT"])
+@require_api_key
+def api_instances_set_retention(iid):
+    """Set how long this instance's backups are kept before auto-pruning.
+    Body: {"max_backup_age_days": 0–365} or {"max_backup_age_days": null}
+    (null clears the override so the global / env value takes over)."""
+    iid_l = (iid or "").strip().lower()
+    if not iid_l:
+        return jsonify({"error": "instance id required"}), 400
+    if iid_l not in APP_DEFAULTS and not _instances.get(iid_l):
+        return jsonify({"error": "unknown instance"}), 404
+    body = request.get_json(force=True) or {}
+    days = body.get("max_backup_age_days", body.get("days"))
+    try:
+        ret = _settings.set_instance_retention(iid_l, days)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return jsonify({
+        "id":                       iid_l,
+        "retention_days":           ret.get(iid_l),   # None when cleared
+        "retention_effective_days": _settings.max_backup_age_days(
+            app.config["MAX_BACKUP_AGE_DAYS"], instance=iid_l),
+    })
 
 
 @app.route("/api/settings")
