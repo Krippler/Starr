@@ -59,13 +59,19 @@ jobs:
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
             krippler52/starr
-          # Emit clean, pinnable tags. A git tag v1.0.4 produces:
-          #   1.0.4 (full), 1.0 (minor), 1 (major), and latest (default branch).
+          # Tagging policy:
+          #   • a git tag v1.1.2 (a release)  → 1.1.2, 1.1, 1, AND latest
+          #   • a push to main (newest code)  → edge
+          # So `latest` always points at the newest *released version*, while
+          # `edge` tracks the tip of main for anyone who wants bleeding edge.
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=edge,enable={{is_default_branch}}
 
       - name: Build and push Docker image
         id: build-and-push
@@ -84,3 +90,55 @@ jobs:
           TAGS: ${{ steps.meta.outputs.tags }}
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
+
+  # Create a GitHub Release for every pushed version tag (v*.*.*), with notes
+  # pulled from the matching CHANGELOG.md section. Runs only after the image
+  # for that tag has been built, pushed, and signed.
+  github-release:
+    name: GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create / update GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          REPO_LC="${GITHUB_REPOSITORY,,}"
+
+          # Pull this version's section out of CHANGELOG.md (everything between
+          # "## [1.1.2]" and the next "## [" header); strip leading blanks.
+          SECTION="$(awk -v ver="$VERSION" '
+            $0 ~ "^## \\[" ver "\\]" {flag=1; next}
+            flag && /^## \[/ {exit}
+            flag {print}
+          ' CHANGELOG.md | sed "/./,\$!d")"
+
+          {
+            if [ -n "$SECTION" ]; then
+              printf '%s\n' "$SECTION"
+            else
+              echo "Release ${GITHUB_REF_NAME}."
+            fi
+            echo ""
+            echo "### Docker images"
+            echo '```bash'
+            echo "docker pull krippler52/starr:${VERSION}"
+            echo "docker pull ghcr.io/${REPO_LC}:${VERSION}"
+            echo '```'
+            echo "Also published as \`latest\`, \`${VERSION%.*}\`, and \`${VERSION%%.*}\`."
+          } > notes.md
+
+          # Idempotent: re-pushing a tag updates the existing release.
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+          else
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+          fi

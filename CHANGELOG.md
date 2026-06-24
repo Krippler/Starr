@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [Unreleased]
+
+### Changed
+- **Release automation** — `latest` now tracks the newest **released version** (every `v*.*.*` tag) instead of every push to `main`; merges to `main` publish an `edge` tag instead. Each version tag also auto-creates a **GitHub Release** with notes pulled from this changelog. (`.github/workflows/docker-publish.yml`)
+
 ## [1.1.2] — 2026-06-24
 
 Adjustable backup retention — globally and per instance — plus a comprehensive
