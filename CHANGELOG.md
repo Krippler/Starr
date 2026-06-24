@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [Unreleased]
+
+### Changed
+- **Releases are now fully automatic** — merging a release PR (one that flips `CHANGELOG.md`'s `[Unreleased]` section to `[X.Y.Z]`) is enough. CI detects the version flip, publishes the version pins (`X.Y.Z` / `X.Y` / `X`), moves **`latest`** to that release, auto-creates the `vX.Y.Z` git tag, and creates the matching GitHub Release — all in the same workflow run. Manually pushing a `v*.*.*` tag still works (useful for re-running the release pipeline). (`.github/workflows/docker-publish.yml`)
+
 ## [1.2.0] — 2026-06-24
 
 UX rework — the dashboard is much calmer at rest, with secondary panels

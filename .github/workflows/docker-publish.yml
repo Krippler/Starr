@@ -17,13 +17,61 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write     # write so the release-on-merge path can create a git tag
       packages: write
       id-token: write
+    outputs:
+      release_version: ${{ steps.detect.outputs.version }}
+      is_release_merge: ${{ steps.detect.outputs.is_release_merge }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Need full history + tags so the detect step can see whether a
+          # vX.Y.Z tag already exists for the version that landed.
+          fetch-depth: 0
+          fetch-tags: true
+
+      # ── Release-on-merge detection ─────────────────────────────────────────
+      # When a release PR merges into main its commit:
+      #   • flips CHANGELOG.md's top section from "[Unreleased]" to "[X.Y.Z]"
+      #   • bumps the version banners in app/server.py + app/templates/index.html
+      # We detect that here so plain merges keep publishing only `edge` while a
+      # release-PR merge also publishes the version pins + `latest` + auto-
+      # creates the git tag and GitHub Release in the same workflow run — no
+      # need to push a tag from the maintainer's machine.
+      - name: Detect release-on-merge
+        id: detect
+        if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+        run: |
+          set -euo pipefail
+          # First "## [...]" header in the CHANGELOG. A real release looks like
+          # "## [1.2.0] — 2026-06-24"; anything else (most importantly the
+          # placeholder "## [Unreleased]") is a no-op.
+          TOP="$(awk '/^## \[/ {print; exit}' CHANGELOG.md || true)"
+          echo "top: ${TOP}"
+          VER="$(printf '%s' "$TOP" | sed -nE 's/^## \[([0-9]+\.[0-9]+\.[0-9]+)\].*/\1/p')"
+          if [ -z "$VER" ]; then
+            echo "Top CHANGELOG section is not a release header — skipping auto-release."
+            echo "is_release_merge=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Bail out if vX.Y.Z is already a real tag in this repo — that means
+          # the maintainer pushed the tag manually (the old flow) and we don't
+          # want to clash with it.
+          if git rev-parse -q --verify "refs/tags/v${VER}" >/dev/null; then
+            echo "Tag v${VER} already exists — skipping auto-release."
+            echo "is_release_merge=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          MAJOR="${VER%%.*}"
+          MINOR_FULL="${VER%.*}"
+          echo "Release commit detected: v${VER}"
+          echo "is_release_merge=true"      >> "$GITHUB_OUTPUT"
+          echo "version=${VER}"             >> "$GITHUB_OUTPUT"
+          echo "major=${MAJOR}"             >> "$GITHUB_OUTPUT"
+          echo "major_minor=${MINOR_FULL}"  >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
         if: github.event_name != 'pull_request'
@@ -34,7 +82,6 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f95db51fddba0c2d1ec667646a06c2ce06100226 # v3.0.0
 
-      # Login to GHCR
       - name: Log into GHCR
         if: github.event_name != 'pull_request'
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
@@ -43,7 +90,6 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # ✅ ADD: separate login for Docker Hub
       - name: Log into Docker Hub
         if: github.event_name != 'pull_request'
         uses: docker/login-action@343f7c4344506bcbf9b4de18042ae17996df046d # v3.0.0
@@ -55,15 +101,15 @@ jobs:
         id: meta
         uses: docker/metadata-action@96383f45573cb7f253c731d3b3ab81c87ef81934 # v5.0.0
         with:
-          # ✅ Push to BOTH registries in one build
           images: |
             ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
             krippler52/starr
           # Tagging policy:
-          #   • a git tag v1.1.2 (a release)  → 1.1.2, 1.1, 1, AND latest
-          #   • a push to main (newest code)  → edge
-          # So `latest` always points at the newest *released version*, while
-          # `edge` tracks the tip of main for anyone who wants bleeding edge.
+          #   • push tag v1.2.0                 → 1.2.0, 1.2, 1, latest  (manual flow)
+          #   • release-PR merge to main        → 1.2.0, 1.2, 1, latest  (+ edge)
+          #   • plain merge to main             → edge
+          # So `latest` always points at the newest released version; `edge`
+          # tracks the tip of main between releases.
           flavor: |
             latest=false
           tags: |
@@ -72,6 +118,10 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=edge,enable={{is_default_branch}}
+            type=raw,value=${{ steps.detect.outputs.version }},enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
+            type=raw,value=${{ steps.detect.outputs.major_minor }},enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
+            type=raw,value=${{ steps.detect.outputs.major }},enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
+            type=raw,value=latest,enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
 
       - name: Build and push Docker image
         id: build-and-push
@@ -91,12 +141,29 @@ jobs:
           DIGEST: ${{ steps.build-and-push.outputs.digest }}
         run: echo "${TAGS}" | xargs -I {} cosign sign --yes {}@${DIGEST}
 
-  # Create a GitHub Release for every pushed version tag (v*.*.*), with notes
-  # pulled from the matching CHANGELOG.md section. Runs only after the image
-  # for that tag has been built, pushed, and signed.
+      # When a release-PR merge auto-published the version pins, also stamp
+      # the commit with vX.Y.Z so the version is marked in git history and the
+      # GitHub Release below has a tag to attach to. Default GITHUB_TOKEN can
+      # push tags but will NOT re-trigger this workflow (intentional — would
+      # be a loop), so the rest of the release work happens in the next job.
+      - name: Auto-create vX.Y.Z git tag
+        if: steps.detect.outputs.is_release_merge == 'true'
+        env:
+          VERSION: ${{ steps.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${VERSION}" -m "Release v${VERSION}"
+          git push origin "v${VERSION}"
+
+  # Create / update the GitHub Release with notes from the matching CHANGELOG
+  # section. Runs after build for either path:
+  #   • a manual tag push (refs/tags/v…), OR
+  #   • a release-PR merge that the build job detected.
   github-release:
     name: GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || needs.build.outputs.is_release_merge == 'true'
     needs: build
     runs-on: ubuntu-latest
     permissions:
@@ -108,13 +175,22 @@ jobs:
       - name: Create / update GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.build.outputs.release_version }}
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME#v}"
+          # Choose the version: tag push uses the ref name; release-PR merge
+          # uses the version the build job extracted from CHANGELOG.
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            TAG="$GITHUB_REF_NAME"
+          else
+            VERSION="$RELEASE_VERSION"
+            TAG="v${VERSION}"
+          fi
           REPO_LC="${GITHUB_REPOSITORY,,}"
 
           # Pull this version's section out of CHANGELOG.md (everything between
-          # "## [1.1.2]" and the next "## [" header); strip leading blanks.
+          # "## [1.2.0]" and the next "## [" header); strip leading blanks.
           SECTION="$(awk -v ver="$VERSION" '
             $0 ~ "^## \\[" ver "\\]" {flag=1; next}
             flag && /^## \[/ {exit}
@@ -125,7 +201,7 @@ jobs:
             if [ -n "$SECTION" ]; then
               printf '%s\n' "$SECTION"
             else
-              echo "Release ${GITHUB_REF_NAME}."
+              echo "Release ${TAG}."
             fi
             echo ""
             echo "### Docker images"
@@ -136,9 +212,10 @@ jobs:
             echo "Also published as \`latest\`, \`${VERSION%.*}\`, and \`${VERSION%%.*}\`."
           } > notes.md
 
-          # Idempotent: re-pushing a tag updates the existing release.
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release edit "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+          # Idempotent: re-pushing a tag (or re-running the workflow) updates
+          # the existing release rather than failing.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "$TAG" --notes-file notes.md
           else
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file notes.md
+            gh release create "$TAG" --title "$TAG" --notes-file notes.md --target "${GITHUB_SHA}"
           fi

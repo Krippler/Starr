@@ -58,34 +58,36 @@ grep -rl 'yourdockerhubuser'  . | xargs sed -i 's/yourdockerhubuser/mydockerhubu
 
 ## 5. Releasing
 
+Releases are fully automatic — merging a release PR is enough.
+
 Tagging policy (`.github/workflows/docker-publish.yml`):
 
-| You push… | Images produced | GitHub Release |
-|---|---|---|
-| a merge to `main` | `edge` | — |
-| a git tag `vX.Y.Z` | `X.Y.Z`, `X.Y`, `X`, **`latest`** | **created automatically** |
+| Trigger | Images produced | Git tag | GitHub Release |
+|---|---|---|---|
+| plain merge to `main` (CHANGELOG top is `[Unreleased]`) | `edge` | — | — |
+| **release-PR merge** (CHANGELOG top is `[X.Y.Z] — DATE`) | `edge` **+** `X.Y.Z`, `X.Y`, `X`, **`latest`** | `vX.Y.Z` (auto) | created automatically |
+| manual `git push origin vX.Y.Z` | `X.Y.Z`, `X.Y`, `X`, **`latest`** | (already pushed) | created/updated automatically |
 
-So `latest` always points at the newest **released version**, and `edge`
-tracks the tip of `main` for testing ahead of a release.
+So `latest` always points at the newest **released version** — running
+`docker pull krippler52/starr` (no tag) on a container host gets the
+newest release with zero config; users who want to pin pick `X.Y.Z`
+instead. `edge` tracks the tip of `main` for testing ahead of a release.
 
 To cut a release:
 
-```bash
-# 1. Land your changes on main (via PR), and make sure CHANGELOG.md has a
-#    "## [X.Y.Z] — DATE" section — its body becomes the GitHub Release notes.
-git checkout main && git pull
+1. Open a release PR that:
+   - flips `CHANGELOG.md`'s `[Unreleased]` section to `[X.Y.Z] — YYYY-MM-DD`,
+   - bumps the version banners in `app/server.py` and `app/templates/index.html`,
+   - bumps the README image-tag pin.
+2. Merge it.
 
-# 2. Tag and push the tag.
-git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin vX.Y.Z
-```
+That's it. CI detects the version flip, publishes the image set, pushes
+the `vX.Y.Z` git tag, and creates the matching GitHub Release with the
+CHANGELOG section as the body — all in the same workflow run, no need
+to push a tag from your machine.
 
-The workflow then:
-1. Builds the `linux/amd64` image
-2. Pushes to **Docker Hub** and **GHCR** as `X.Y.Z`, `X.Y`, `X`, and `latest`
-3. **Signs** every tag with cosign (keyless / Sigstore)
-4. **Creates a GitHub Release** named `vX.Y.Z`, with notes pulled from the
-   matching `CHANGELOG.md` section plus the pull commands
+(Manually pushing a `vX.Y.Z` tag still works — useful for re-running the
+release pipeline on an already-released version.)
 
 ---
 
@@ -108,14 +110,9 @@ Or host your own template repository and add it in Unraid under:
    repair-log greeting in `index.html`, the log banner in `server.py`), the
    README image-tag pin, and flips the `CHANGELOG.md` `[Unreleased]` section
    to `[X.Y.Z] — DATE`.
-2. Merge it (this updates `edge`).
-3. Tag and push:
+2. Merge it.
 
-```bash
-git checkout main && git pull
-git tag -a vX.Y.Z -m "Release vX.Y.Z"
-git push origin vX.Y.Z
-```
-
-Version images, `latest`, and the GitHub Release are all produced automatically
-(see section 5).
+CI detects the CHANGELOG version flip, publishes the version images
+(`X.Y.Z` / `X.Y` / `X`), moves **`latest`**, pushes the `vX.Y.Z` git
+tag, and creates the matching GitHub Release — all automatically in
+the same workflow run.
