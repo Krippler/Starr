@@ -3,10 +3,50 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
-## [Unreleased]
+## [1.2.0] — 2026-06-24
+
+UX rework — the dashboard is much calmer at rest, with secondary panels
+collapsed by default and controls grouped where they're actually used.
+Plus a release-automation rework so `latest` finally means "newest
+release" and every tag auto-creates a GitHub Release.
+
+### Added
+- **`edge` image tag** (#47) — every push to `main` publishes
+  `krippler52/starr:edge` and `ghcr.io/krippler/starr:edge`, so testing
+  the tip of `main` ahead of a release no longer means building locally.
 
 ### Changed
-- **Release automation** — `latest` now tracks the newest **released version** (every `v*.*.*` tag) instead of every push to `main`; merges to `main` publish an `edge` tag instead. Each version tag also auto-creates a **GitHub Release** with notes pulled from this changelog. (`.github/workflows/docker-publish.yml`)
+- **`latest` tag now tracks the newest released version, not every commit**
+  (#47) — only `v*.*.*` tag pushes move `latest`. Merges to `main` update
+  `edge` instead. Each version tag also **auto-creates a GitHub Release**
+  with notes pulled from this changelog. (`.github/workflows/docker-publish.yml`)
+- **Dashboard de-clutter** (#48) — Trends, Backups, Schedules, and
+  Notifications panels are collapsible (collapsed by default, state saved
+  per browser). The 1→6 phase indicator only renders during a repair. The
+  shutdown warning collapses to a single muted line at rest and only blows
+  up to the loud orange treatment when Skip Shutdown is checked or no
+  container was discovered. Lazy-load: collapsed sections fetch on first
+  expand instead of at unlock.
+- **Repair Operations panel** (#51) — collapsible, moved to sit directly
+  above the Run Repair button so "pick your ops" lives next to "run". The
+  Dry Run + Skip Shutdown toggles stay in the panel header for one-click
+  access; a small `"3 selected"` chip in the title shows current state at
+  a glance.
+- **Backup retention controls** (#49) consolidated into a single **Retention**
+  card at the top of the Backups panel. Two clearly-labelled columns:
+  *Default for all instances* and *This instance: <name>* — with plain-English
+  source captions (`Saved here` / `From MAX_BACKUP_AGE_DAYS env var`;
+  `Using default (X days)` / `Overrides the default`). No more split between
+  panel header and a vague "current instance" row.
+- **Lock button** (#50) moved out of the Connection panel's action row up to
+  the header next to the status badge, where session controls belong.
+
+### Fixed
+- **Last-run pill and trend charts** now correctly scope to the selected
+  instance instead of bleeding across named extras of the same app (#52).
+  Switching tabs (Sonarr → Radarr → …) reliably updates the pill; the
+  default tab no longer shows runs that actually came from a named extra
+  (e.g. `sonarr-4k`).
 
 ## [1.1.2] — 2026-06-24
 
