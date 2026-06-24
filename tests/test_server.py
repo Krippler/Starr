@@ -1316,3 +1316,123 @@ def test_step_backup_uses_saved_retention(tmp_path, monkeypatch):
     srv._job.reset()
     srv._step_backup({"app": "sonarr", "label": "sonarr"}, str(db))
     assert not old.exists()
+
+
+# ── Per-instance backup retention ───────────────────────────────────────────────
+def test_per_instance_retention_store(tmp_path):
+    from settings import SettingsStore
+    s = SettingsStore(tmp_path / "set.json")
+    # No overrides → falls back to global, then env default
+    assert s.max_backup_age_days(7) == 7
+    s.update({"max_backup_age_days": 30})
+    assert s.max_backup_age_days(7) == 30
+    assert s.max_backup_age_days(7, instance="sonarr") == 30   # inherits global
+    # Per-instance override wins
+    s.set_instance_retention("sonarr", 14)
+    assert s.max_backup_age_days(7, instance="sonarr") == 14
+    assert s.max_backup_age_days(7, instance="radarr") == 30   # still inherits
+    # Clearing the override falls back to global again
+    s.set_instance_retention("sonarr", None)
+    assert s.max_backup_age_days(7, instance="sonarr") == 30
+    assert s.instance_retention_all() == {}                    # cleaned up
+
+    # Validation: out-of-range rejected
+    for bad in (-1, 366, "abc"):
+        with pytest.raises(ValueError):
+            s.set_instance_retention("sonarr", bad)
+    # Forever is allowed
+    s.set_instance_retention("sonarr-4k", 0)
+    assert s.max_backup_age_days(7, instance="sonarr-4k") == 0
+
+
+def test_per_instance_retention_persists(tmp_path):
+    from settings import SettingsStore
+    path = tmp_path / "set.json"
+    SettingsStore(path).set_instance_retention("sonarr-4k", 14)
+    assert SettingsStore(path).max_backup_age_days(7, instance="sonarr-4k") == 14
+
+
+def test_per_instance_retention_endpoint(client, tmp_path):
+    from settings import SettingsStore
+    from instances import InstanceStore
+    srv._settings = SettingsStore(tmp_path / "set.json")
+    srv._instances = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    inst = srv._instances.add({"app": "sonarr", "name": "4K", "url": "http://h:8989"})
+    # Set per-instance retention
+    r = client.put(f"/api/instances/{inst['id']}/retention",
+                   data=json.dumps({"max_backup_age_days": 14}),
+                   content_type="application/json")
+    assert r.status_code == 200
+    body = json.loads(r.data)
+    assert body["retention_days"] == 14
+    assert body["retention_effective_days"] == 14
+    # Default instance (id == app name) is allowed too
+    r = client.put("/api/instances/sonarr/retention",
+                   data=json.dumps({"max_backup_age_days": 90}),
+                   content_type="application/json")
+    assert r.status_code == 200 and json.loads(r.data)["retention_days"] == 90
+    # Clearing with null restores inheritance
+    r = client.put(f"/api/instances/{inst['id']}/retention",
+                   data=json.dumps({"max_backup_age_days": None}),
+                   content_type="application/json")
+    assert r.status_code == 200 and json.loads(r.data)["retention_days"] is None
+    # Out of range → 400
+    r = client.put(f"/api/instances/{inst['id']}/retention",
+                   data=json.dumps({"max_backup_age_days": 9999}),
+                   content_type="application/json")
+    assert r.status_code == 400
+    # Unknown instance → 404
+    r = client.put("/api/instances/bogus/retention",
+                   data=json.dumps({"max_backup_age_days": 30}),
+                   content_type="application/json")
+    assert r.status_code == 404
+
+
+def test_instances_listing_includes_retention(client, tmp_path):
+    from settings import SettingsStore
+    from instances import InstanceStore
+    srv._settings = SettingsStore(tmp_path / "set.json")
+    srv._instances = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    srv._instances.add({"app": "sonarr", "name": "4K", "url": "http://h:8989"})
+    srv._settings.set_instance_retention("sonarr-4k", 14)
+    srv.app.config["MAX_BACKUP_AGE_DAYS"] = 7
+    items = json.loads(client.get("/api/instances").data)
+    by_id = {x["id"]: x for x in items}
+    s4k = by_id["sonarr-4k"]
+    assert s4k["retention_days"] == 14
+    assert s4k["retention_effective_days"] == 14
+
+
+def test_step_backup_prunes_per_instance(tmp_path, monkeypatch):
+    """A 20-day-old sonarr-4k backup should be kept when sonarr-4k has its
+    own 30-day retention even though the global is 7. A sibling Sonarr
+    backup keeps the inherited 7-day cutoff."""
+    from settings import SettingsStore
+    bdir = tmp_path / "backups"; bdir.mkdir()
+    srv.app.config["BACKUP_DIR"] = bdir
+    srv.app.config["BACKUP_COMPRESS"] = False
+    srv.app.config["MAX_BACKUP_AGE_DAYS"] = 7
+    srv._settings = SettingsStore(tmp_path / "set.json")
+    srv._settings.set_instance_retention("sonarr-4k", 30)
+
+    # 20-day-old sonarr-4k backup (under 30, over global 7) — should be kept
+    s4k_old = bdir / "sonarr-4k_20260601_000000.db"
+    s4k_old.write_bytes(b"x")
+    old = srv.time.time() - 20 * 86400
+    os.utime(s4k_old, (old, old))
+
+    # 20-day-old default sonarr backup (inherits global 7) — should be pruned
+    son_old = bdir / "sonarr_20260601_000000.db"
+    son_old.write_bytes(b"x")
+    os.utime(son_old, (old, old))
+
+    db = tmp_path / "src.db"; db.write_bytes(b"data")
+    srv._job.reset()
+    srv._step_backup({"app": "sonarr", "label": "sonarr-4k"}, str(db))
+    assert s4k_old.exists()         # 4K retention kept it
+    assert son_old.exists()         # sibling untouched by the 4K prune
+
+    srv._job.reset()
+    srv._step_backup({"app": "sonarr", "label": "sonarr"}, str(db))
+    assert not son_old.exists()     # global 7-day pruned it
+    assert s4k_old.exists()         # 4K still safe

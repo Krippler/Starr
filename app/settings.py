@@ -63,9 +63,45 @@ class SettingsStore:
             self.save()
             return dict(self._items)
 
-    def max_backup_age_days(self, env_default: int) -> int:
-        """Stored value wins; env default falls in when nothing saved."""
+    # ── Per-instance retention ───────────────────────────────────────────
+    # Each instance (the env/discovery default's id == app name, or a named
+    # extra's "<app>-<slug>") can carry its own retention. Resolution at
+    # prune time is: instance → global → env-var fallback. We persist these
+    # under a nested "instance_retention" map rather than separate keys so
+    # the JSON stays tidy.
+
+    def instance_retention_all(self) -> dict:
         with self._lock:
+            return dict(self._items.get("instance_retention", {}))
+
+    def set_instance_retention(self, iid: str, days) -> dict:
+        """Save / clear retention for a single instance. Passing days=None
+        removes the override so the global / env value applies again."""
+        iid = (iid or "").strip().lower()
+        if not iid:
+            raise ValueError("instance id required")
+        with self._lock:
+            ret = dict(self._items.get("instance_retention", {}))
+            if days is None or days == "":
+                ret.pop(iid, None)
+            else:
+                ret[iid] = _coerce_retention(days)
+            if ret:
+                self._items["instance_retention"] = ret
+            else:
+                self._items.pop("instance_retention", None)
+            self.save()
+            return dict(self._items.get("instance_retention", {}))
+
+    def max_backup_age_days(self, env_default: int, instance: str | None = None) -> int:
+        """Resolved retention for a backup. Per-instance override wins, then
+        the saved global, then the boot env default. Cleared / unset values
+        cleanly fall through to the next level."""
+        iid = (instance or "").strip().lower()
+        with self._lock:
+            ret = self._items.get("instance_retention") or {}
+            if iid and isinstance(ret.get(iid), int):
+                return ret[iid]
             v = self._items.get("max_backup_age_days")
         return v if isinstance(v, int) else int(env_default)
 
