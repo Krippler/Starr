@@ -1240,3 +1240,79 @@ def test_apply_instance_default_uses_override_when_id_empty(tmp_path):
     assert cfg["apikey"] == "ui-key"
     # Sanity: label still reflects the default (= app name).
     assert cfg["label"] == "prowlarr"
+
+
+# ── Backup retention setting (UI-adjustable) ───────────────────────────────────
+def test_settings_store_round_trip(tmp_path):
+    from settings import SettingsStore
+    s = SettingsStore(tmp_path / "set.json")
+    assert s.get() == {}
+    s.update({"max_backup_age_days": 30})
+    assert s.get()["max_backup_age_days"] == 30
+    # persists across reloads
+    s2 = SettingsStore(tmp_path / "set.json")
+    assert s2.get()["max_backup_age_days"] == 30
+    # env fallback when nothing saved
+    s3 = SettingsStore(tmp_path / "fresh.json")
+    assert s3.max_backup_age_days(env_default=7) == 7
+
+
+def test_settings_validates_range(tmp_path):
+    from settings import SettingsStore
+    s = SettingsStore(tmp_path / "set.json")
+    s.update({"max_backup_age_days": 0})        # 0 = keep forever, allowed
+    s.update({"max_backup_age_days": 365})      # upper bound
+    for bad in (-1, 366, "abc"):
+        with pytest.raises(ValueError):
+            s.update({"max_backup_age_days": bad})
+
+
+def test_settings_endpoints(client, tmp_path):
+    from settings import SettingsStore
+    srv._settings = SettingsStore(tmp_path / "set.json")
+    # GET: shape includes effective value + source
+    r = client.get("/api/settings")
+    assert r.status_code == 200
+    body = json.loads(r.data)
+    assert body["max_backup_age_days_source"] == "env"
+    assert body["max_backup_age_days_min"] == 0 and body["max_backup_age_days_max"] == 365
+    # PUT: save 90, GET reports saved value + source
+    r = client.put("/api/settings",
+                   data=json.dumps({"max_backup_age_days": 90}),
+                   content_type="application/json")
+    assert r.status_code == 200
+    body = json.loads(r.data)
+    assert body["max_backup_age_days"] == 90
+    assert body["max_backup_age_days_source"] == "saved"
+    # PUT: invalid → 400
+    r = client.put("/api/settings",
+                   data=json.dumps({"max_backup_age_days": 9999}),
+                   content_type="application/json")
+    assert r.status_code == 400
+
+
+def test_step_backup_uses_saved_retention(tmp_path, monkeypatch):
+    from settings import SettingsStore
+    bdir = tmp_path / "backups"; bdir.mkdir()
+    srv.app.config["BACKUP_DIR"] = bdir
+    srv.app.config["BACKUP_COMPRESS"] = False
+    srv.app.config["MAX_BACKUP_AGE_DAYS"] = 7   # env default
+    srv._settings = SettingsStore(tmp_path / "set.json")
+    srv._settings.update({"max_backup_age_days": 30})   # saved override
+
+    # Old backup that env-default-7 would prune but saved-30 would keep.
+    old = bdir / "sonarr_20260501_000000.db"
+    old.write_bytes(b"x")
+    old_mtime = srv.time.time() - 14 * 86400
+    os.utime(old, (old_mtime, old_mtime))
+
+    db = tmp_path / "src.db"; db.write_bytes(b"data")
+    srv._job.reset()
+    srv._step_backup({"app": "sonarr", "label": "sonarr"}, str(db))
+    assert old.exists()   # saved 30-day retention kept the 14-day-old file
+
+    # Flip saved back to 7 → prune should now remove it.
+    srv._settings.update({"max_backup_age_days": 7})
+    srv._job.reset()
+    srv._step_backup({"app": "sonarr", "label": "sonarr"}, str(db))
+    assert not old.exists()
