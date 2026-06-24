@@ -495,8 +495,9 @@ def _step_backup(cfg, db_path: str) -> str | None:
     else:
         emit("OK", f"Backup created ({out_mb:.1f} MB)", "ok")
 
-    # Prune old backups (match both .db and .db.zst for this instance label)
-    max_days = app.config["MAX_BACKUP_AGE_DAYS"]
+    # Prune old backups (match both .db and .db.zst for this instance label).
+    # UI-saved retention wins; env var is the boot fallback.
+    max_days = _settings.max_backup_age_days(app.config["MAX_BACKUP_AGE_DAYS"])
     if max_days > 0:
         cutoff  = time.time() - max_days * 86400
         removed = 0
@@ -1468,11 +1469,15 @@ def _run_scheduled(cfg: dict) -> dict:
 from schedules import ScheduleStore, ScheduleRunner   # noqa: E402
 from history import HistoryStore                       # noqa: E402
 from instances import InstanceStore                    # noqa: E402
+from settings import SettingsStore, MIN_RETENTION_DAYS, MAX_RETENTION_DAYS  # noqa: E402
 import notify as _notify                               # noqa: E402
 import atexit                                          # noqa: E402
 
 # Notification config (Apprise + Signal). Persisted alongside schedules.
 _notify_config = _notify.NotifyConfig(app.config["BACKUP_DIR"] / ".starr-notify.json")
+
+# Persisted Starr settings (e.g. backup retention adjustable from the UI).
+_settings = SettingsStore(app.config["BACKUP_DIR"] / ".starr-settings.json")
 
 # Persistent run history (last-run pill, pre-repair estimate, trend chart).
 _history = HistoryStore(app.config["BACKUP_DIR"] / ".starr-history.json")
@@ -1578,6 +1583,32 @@ def api_instances_set_credentials(iid):
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     return jsonify({"status": "ok", "id": iid_l, "override": ov})
+
+
+@app.route("/api/settings")
+@require_api_key
+def api_settings_get():
+    """Return saved settings merged with effective defaults so the UI can
+    show what's currently in force without having to re-derive it."""
+    saved = _settings.get()
+    env_default = app.config["MAX_BACKUP_AGE_DAYS"]
+    return jsonify({
+        "max_backup_age_days":           saved.get("max_backup_age_days", env_default),
+        "max_backup_age_days_source":    "saved" if "max_backup_age_days" in saved else "env",
+        "max_backup_age_days_env":       env_default,
+        "max_backup_age_days_min":       MIN_RETENTION_DAYS,
+        "max_backup_age_days_max":       MAX_RETENTION_DAYS,
+    })
+
+
+@app.route("/api/settings", methods=["PUT"])
+@require_api_key
+def api_settings_update():
+    try:
+        _settings.update(request.get_json(force=True) or {})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    return api_settings_get()
 
 
 @app.route("/api/history")

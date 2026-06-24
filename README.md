@@ -16,7 +16,7 @@
 - **Browser dashboard** — no SSH required
 - **Live log streaming** via Server-Sent Events (SSE)
 - **Safe shutdown sequence** — calls `/api/v3/system/shutdown` and polls until confirmed offline before touching the DB
-- **Auto-backup** before every repair, with configurable retention (default 7 days)
+- **Auto-backup** before every repair, with retention adjustable from the dashboard up to 1 year (or *Forever*)
 - **6 SQLite operations**: integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE
 - **Dry-run mode** — preview every step without making changes
 - **Run history** — last-run pill, pre-repair time estimate, per-app DB-size / duration trend charts, and a persistent run log
@@ -99,7 +99,7 @@ docker run -d \
 | `PORT` | `8877` | Web UI listen port |
 | `SECRET_KEY` | _(required)_ | Web UI access key — set this to protect the dashboard |
 | `LOG_LEVEL` | `INFO` | Log level: `DEBUG` `INFO` `WARNING` `ERROR` |
-| `MAX_BACKUP_AGE_DAYS` | `7` | Days to keep backups before auto-pruning |
+| `MAX_BACKUP_AGE_DAYS` | `7` | Days to keep backups before auto-pruning. Boot default; the dashboard can override (0–365; 0 = keep forever). |
 | `BACKUP_DIR` | `/backups` | Backup directory inside the container |
 | `SONARR_HOST` | _(blank)_ | Sonarr hostname or IP |
 | `SONARR_PORT` | `8989` | Sonarr HTTP port |
