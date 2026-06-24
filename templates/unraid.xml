@@ -10,16 +10,26 @@
   <Support>https://github.com/Krippler/Starr/issues</Support>
   <ReadmeURL>https://github.com/Krippler/Starr/blob/main/README.md</ReadmeURL>
   <Overview>
-    Web UI for diagnosing and repairing Sonarr, Radarr, Lidarr, and Sportarr SQLite databases.
-    Safely stops the target *arr container, creates a timestamped backup, runs SQLite
-    PRAGMA repairs (integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX,
-    ANALYZE) on the idle database, then starts the container back up. All repair
-    operations stream live to the browser terminal. Supports a built-in scheduler
-    with skip-if-clean semantics, dry-run mode, and per-app API key auth.
+    Web UI for diagnosing and repairing the SQLite databases used by Sonarr, Radarr,
+    Lidarr, Sportarr, Readarr, Prowlarr, Whisparr, and Bazarr.
+
+    Safely stops the target *arr container, takes a (zstd-compressed) timestamped
+    backup, runs SQLite PRAGMA repairs (integrity check, FK repair, WAL checkpoint,
+    VACUUM, REINDEX, ANALYZE) on the idle database, then starts the container back
+    up. Repair output streams live to the browser via SSE — scheduled runs stream
+    into the same log.
+
+    Features: cron scheduler with skip-if-clean, multiple instances per app (e.g.
+    a second Sonarr), run history with last-run pill + pre-repair time estimate +
+    per-instance trend charts, one-click restore from any backup, mid-VACUUM cancel
+    (real SQLite interrupt), per-instance backup retention up to 1 year, and
+    notifications on completion via Apprise (Discord/Telegram/ntfy/Pushover/…),
+    Signal (signal-cli-rest-api), or plain JSON webhooks.
 
     With the Docker socket mounted and a single /appdata mount pointed at your
     host appdata root, Starr auto-discovers each *arr container — its URL,
-    container name, and database path — so you only need to enter the API keys.
+    container name, and database path — so you only need to paste the API keys
+    and click Save Credentials.
   </Overview>
 
   <!-- ── Appearance / runtime ───────────────────────────────────────────── -->
