@@ -75,7 +75,7 @@ docker run -d \
 | `latest` | newest **released version** (updated on every version tag) |
 | `edge` | tip of `main` — newest merged code, for testing ahead of a release |
 
-> Pushing a `v*.*.*` git tag builds the version images, updates `latest`, and auto-creates a matching **GitHub Release** with notes from the [CHANGELOG](CHANGELOG.md). Merges to `main` (without a tag) only update `edge`.
+> **Releases are fully automatic.** Merging a release PR (one that flips `CHANGELOG.md`'s `[Unreleased]` section to `[X.Y.Z]`) is enough — CI publishes the version pins (`X.Y.Z` / `X.Y` / `X`), moves **`latest`** to that release, auto-creates the `vX.Y.Z` git tag, and creates the matching **GitHub Release** with notes from the [CHANGELOG](CHANGELOG.md). Plain merges to `main` (no version flip) only update `edge`. Pushing a `v*.*.*` tag manually still works the same — useful for re-running the release pipeline.
 
 ---
 
