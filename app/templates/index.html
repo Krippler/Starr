@@ -1453,10 +1453,14 @@ function fmtAgo(ts) {
 // env/discovery default falls back to ?app= so pre-multi-instance records
 // still surface in the default instance's view.
 function historyQS(extra) {
+  // Always scope by instance id so each tab/instance gets its own pill, trend
+  // chart, and estimate. For the env/discovery default the id is the bare app
+  // name ("sonarr"); for a named extra it's "sonarr-4k". Pre-multi-instance
+  // records that have no `instance` field still surface under the default —
+  // the backend treats their `app` as the implicit instance label.
   const inst = currentInstance();
-  const params = inst && !inst.default
-    ? `instance=${encodeURIComponent(inst.id)}`
-    : `app=${encodeURIComponent(currentApp)}`;
+  const iid = inst?.id || currentApp;
+  const params = `instance=${encodeURIComponent(iid)}`;
   return extra ? `${params}&${extra}` : params;
 }
 async function refreshRunMeta() {
