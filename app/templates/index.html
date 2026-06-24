@@ -53,6 +53,7 @@ header {
 .logo h1 { font-family: 'Syne', sans-serif; font-size: 20px; font-weight: 800; color: #fff; line-height: 1; letter-spacing: .03em; }
 .logo p  { font-size: 10px; color: var(--muted); letter-spacing: .14em; text-transform: uppercase; margin-top: 4px; }
 .header-right { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.header-lock-btn { font-size: 10px; padding: 6px 10px; }
 .version-badge { font-size: 10px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); padding: 5px 10px; border-radius: 4px; }
 .status-badge {
   display: flex; align-items: center; gap: 7px; font-size: 11px;
@@ -403,6 +404,11 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         <div class="status-dot pulse" id="statusDot"></div>
         <span id="statusText">READY</span>
       </div>
+      <button class="btn btn-ghost btn-sm header-lock-btn" onclick="lockUI()" id="lockBtn"
+              title="Lock the dashboard (clears the Web Key from this browser)">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        Lock
+      </button>
     </div>
   </header>
 
@@ -489,10 +495,6 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         <button class="btn btn-ghost btn-sm" onclick="testConnection()" id="testBtn">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Test Connection
-        </button>
-        <button class="btn btn-ghost btn-sm" onclick="lockUI()" id="lockBtn" style="margin-left:auto">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
-          Lock
         </button>
       </div>
     </div>
