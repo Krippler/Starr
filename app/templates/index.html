@@ -103,7 +103,8 @@ header {
 .instance-form { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
 .instance-form input { flex: 1 1 160px; padding: 7px 10px; font-size: 11px; background: var(--panel);
   border: 1px solid var(--border); border-radius: 6px; color: var(--fg, #e6e6e6); font-family: inherit; }
-.phases { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; }
+.phases { display: none; grid-template-columns: repeat(6, 1fr); gap: 8px; margin-bottom: 16px; }
+.phases.visible { display: grid; }
 .phase {
   background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 11px 8px; text-align: center; transition: all .3s; position: relative; overflow: hidden;
@@ -126,6 +127,16 @@ header {
   padding: 11px 16px; border-bottom: 1px solid var(--border);
   background: rgba(255,255,255,.018);
 }
+.panel.collapsible > .panel-head { cursor: pointer; user-select: none; transition: background .15s; }
+.panel.collapsible > .panel-head:hover { background: rgba(255,255,255,.04); }
+.panel.collapsible.is-collapsed > .panel-head { border-bottom-color: transparent; }
+.panel.collapsible.is-collapsed > .panel-body { display: none; }
+.panel-title .chev {
+  display: inline-block; width: 10px; height: 10px; margin-left: 2px; transition: transform .2s;
+  opacity: .55; flex-shrink: 0;
+}
+.panel.collapsible.is-collapsed .panel-title .chev { transform: rotate(-90deg); }
+.panel.collapsible .panel-title .chev { opacity: .55; }
 .panel-title { display: flex; align-items: center; gap: 8px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--app); font-weight: 500; transition: color .4s; }
 .panel-body { padding: 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
@@ -145,6 +156,8 @@ header {
 #retentionDays, #instRetention { background: var(--panel); color: var(--fg, #e6e6e6); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 11px; font-family: inherit; cursor: pointer; }
 #retentionDays:hover, #instRetention:hover { border-color: var(--border-hi); }
 #retentionDays option, #instRetention option { background: #111820; }
+.retention-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 6px; background: rgba(255,255,255,.015); }
+.retention-row .retention-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
 .field input.auth-field { border-color: rgba(176,136,255,.4); }
 .field input.auth-field:focus { border-color: var(--dry); box-shadow: 0 0 0 1px rgba(176,136,255,.2); }
 .ops-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
@@ -281,7 +294,19 @@ header {
   background: rgba(255,149,0,.07); border: 1px solid rgba(255,149,0,.28);
   border-radius: var(--radius); padding: 12px 14px; margin-bottom: 14px;
   display: flex; gap: 12px; align-items: flex-start;
+  transition: background .2s, border-color .2s, padding .2s;
 }
+/* Quiet default — when the shutdown plan is healthy (no Skip Shutdown), the
+   warning collapses to a single line of muted info so it stops dominating the
+   page. Only the loud orange treatment kicks in when there's actually
+   something to worry about (Skip Shutdown checked + no container). */
+.warn-box.quiet {
+  background: rgba(255,255,255,.012); border-color: var(--border);
+  padding: 8px 12px;
+}
+.warn-box.quiet .warn-box-icon { font-size: 13px; }
+.warn-box.quiet .warn-box-body strong { color: var(--muted); font-size: 11px; margin-bottom: 0; display: inline; }
+.warn-box.quiet .warn-box-body span { display: none; }
 .warn-box-icon { font-size: 18px; flex-shrink: 0; margin-top: 1px; }
 .warn-box-body { font-size: 11px; line-height: 1.7; color: var(--muted); }
 .warn-box-body strong { color: var(--warn); display: block; margin-bottom: 3px; font-size: 12px; }
@@ -438,23 +463,6 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
           <label>API Key</label>
           <input id="apikey" type="password" placeholder="Settings › General › API Key">
         </div>
-        <div class="field" style="grid-column:1/-1">
-          <label>Backup retention <span style="color:var(--muted);font-size:9px;margin-left:6px">how long this instance's backups are kept before pruning</span></label>
-          <div style="display:flex;align-items:center;gap:8px">
-            <select id="instRetention" onchange="saveInstRetention()" title="Per-instance retention. 'Inherit global' uses the value in the Backups panel header (or the MAX_BACKUP_AGE_DAYS env var if nothing is saved there). 'Forever' disables pruning for this instance.">
-              <option value="">Inherit global</option>
-              <option value="7">7 days</option>
-              <option value="14">14 days</option>
-              <option value="30">30 days</option>
-              <option value="60">60 days</option>
-              <option value="90">90 days</option>
-              <option value="180">180 days</option>
-              <option value="365">1 year</option>
-              <option value="0">Forever</option>
-            </select>
-            <span id="instRetentionSrc" style="font-size:9px;color:var(--muted)"></span>
-          </div>
-        </div>
       </div>
       <div id="discoveryHint" style="display:none;font-size:10px;line-height:1.5;color:var(--ok);background:rgba(0,200,127,.08);border:1px solid rgba(0,200,127,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
       <div id="discoveryWarn" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
@@ -572,9 +580,10 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
   </div>
 
   <!-- ── Trends ─────────────────────────────────────────────────────────────── -->
-  <div class="panel">
-    <div class="panel-head">
+  <div class="panel collapsible is-collapsed" data-section="trends">
+    <div class="panel-head" onclick="toggleSection('trends')">
       <div class="panel-title">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>
         Trends
       </div>
@@ -585,9 +594,10 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
     </div>
   </div>
 
-  <div class="panel">
-    <div class="panel-head">
+  <div class="panel collapsible is-collapsed" data-section="backups">
+    <div class="panel-head" onclick="toggleSection('backups', event)">
       <div class="panel-title">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Backups
       </div>
@@ -606,15 +616,33 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         <span id="retentionSrc" style="font-size:9px;opacity:.7"></span>
       </div>
     </div>
-    <div class="panel-body" id="backupsPanel">
-      <div class="empty-state">Click "Refresh Backups" to load. Backups from any instance show up here — restore puts the file back over the live database.</div>
+    <div class="panel-body">
+      <div class="retention-row">
+        <span class="retention-label">Override for the current instance:</span>
+        <select id="instRetention" onchange="saveInstRetention()" title="Per-instance retention. 'Inherit global' uses the value above (or MAX_BACKUP_AGE_DAYS if nothing is saved). 'Forever' disables pruning for this instance.">
+          <option value="">Inherit global</option>
+          <option value="7">7 days</option>
+          <option value="14">14 days</option>
+          <option value="30">30 days</option>
+          <option value="60">60 days</option>
+          <option value="90">90 days</option>
+          <option value="180">180 days</option>
+          <option value="365">1 year</option>
+          <option value="0">Forever</option>
+        </select>
+        <span id="instRetentionSrc" style="font-size:9px;color:var(--muted)"></span>
+      </div>
+      <div id="backupsPanel">
+        <div class="empty-state">Click "Refresh Backups" to load. Backups from any instance show up here — restore puts the file back over the live database.</div>
+      </div>
     </div>
   </div>
 
   <!-- ── Scheduled Repairs ──────────────────────────────────────────────────── -->
-  <div class="panel">
-    <div class="panel-head">
+  <div class="panel collapsible is-collapsed" data-section="schedules">
+    <div class="panel-head" onclick="toggleSection('schedules', event)">
       <div class="panel-title">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
         Scheduled Repairs
       </div>
@@ -692,9 +720,10 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
   </div>
 
   <!-- ── Notifications ──────────────────────────────────────────────────────── -->
-  <div class="panel">
-    <div class="panel-head">
+  <div class="panel collapsible is-collapsed" data-section="notifications">
+    <div class="panel-head" onclick="toggleSection('notifications', event)">
       <div class="panel-title">
+        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="6 9 12 15 18 9"/></svg>
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
         Notifications
       </div>
@@ -910,18 +939,26 @@ function syncShutdownWarning() {
   const pretty = cfg.name.charAt(0) + cfg.name.slice(1).toLowerCase();
   const api = cfg.api ?? 'v3';   // '' (Bazarr) is intentional, don't coerce
   const container = (currentInstance()?.container_name || '').trim();
+  const skip = document.getElementById('skipShutdownCheck')?.checked;
+  const box  = document.querySelector('.warn-box');
   const title = document.getElementById('warnTitle');
   const body  = document.getElementById('warnBody');
 
+  // Loud orange only when there's a real concern — Skip Shutdown is on or no
+  // container was discovered. Otherwise show a quiet single-line summary so
+  // the warning doesn't dominate the page.
+  const loud = !!skip || !container;
+  if (box) box.classList.toggle('quiet', !loud);
+
   if (container) {
-    title.textContent = `${pretty}'s container will be stopped (docker stop ${escHtml(container)}) before any repairs are performed`;
+    title.textContent = `${pretty}'s container will be stopped (docker stop ${escHtml(container)}) before any repairs.`;
     body.innerHTML =
       ` The repair sequence runs <code>docker stop ${escHtml(container)}</code>, ` +
       `creates a timestamped backup in <code>/backups</code>, runs SQLite operations on the idle file, ` +
       `then <code>docker start ${escHtml(container)}</code> and waits for ${pretty} to come back online. ` +
       `Do not run while active downloads are in progress.`;
   } else {
-    title.textContent = `${pretty} will be shut down before any repairs are performed`;
+    title.textContent = `${pretty} will be shut down before any repairs.`;
     body.innerHTML =
       ` The repair sequence calls <code>${apiPath(api, 'system/shutdown')}</code>, waits for the process to go offline, ` +
       `creates a timestamped backup in <code>/backups</code>, runs SQLite operations on the idle file, ` +
@@ -988,22 +1025,70 @@ function boot() {
       hint.innerHTML = `<strong>Docker / Unraid:</strong> the app's restart policy will bring it back online seconds after the shutdown API stops it. For a safe repair, <strong>stop the app's container first</strong> (e.g. <code>docker stop ${currentApp}</code>), then keep this checked so Starr repairs the idle database directly. Start the container again when the repair finishes.`;
     }
   };
-  skip.addEventListener('change', syncHint);
+  skip.addEventListener('change', () => { syncHint(); syncShutdownWarning(); });
   syncHint();
 }
 
 // ── Gate reveal / lock ────────────────────────────────────────────────────────
 let _unlocked = false;
+// ── Collapsible secondary panels (Trends / Backups / Schedules / Notifications)
+// Click the panel header to toggle. State is persisted per-browser so a user's
+// preferred layout survives reloads. Default for all four is "collapsed" so
+// the dashboard isn't a wall of panels on first load.
+const SECTION_KEY = 'starr_section_collapsed';
+function _sectionState() {
+  try { return JSON.parse(sessionStorage.getItem(SECTION_KEY) || 'null')
+        || JSON.parse(localStorage.getItem(SECTION_KEY) || '{}'); }
+  catch (_) { return {}; }
+}
+function _saveSectionState(state) {
+  try { localStorage.setItem(SECTION_KEY, JSON.stringify(state)); } catch (_) {}
+}
+function applySectionState() {
+  const state = _sectionState();
+  document.querySelectorAll('.panel.collapsible[data-section]').forEach(p => {
+    const name = p.dataset.section;
+    // If state has a value for this section, honour it; otherwise keep the
+    // markup default (the four secondary panels render is-collapsed in HTML).
+    if (Object.prototype.hasOwnProperty.call(state, name)) {
+      p.classList.toggle('is-collapsed', !!state[name]);
+    }
+  });
+}
+function toggleSection(name, ev) {
+  // Don't toggle when the click landed on an interactive child of the header
+  // (e.g. retention <select>, "Add Schedule" button, Enabled checkbox).
+  if (ev && ev.target.closest('button, select, input, a, label')) return;
+  const p = document.querySelector(`.panel.collapsible[data-section="${name}"]`);
+  if (!p) return;
+  const collapsed = !p.classList.contains('is-collapsed');
+  p.classList.toggle('is-collapsed', collapsed);
+  const state = _sectionState();
+  state[name] = collapsed;
+  _saveSectionState(state);
+  // Lazy: refresh content when a section is opened.
+  if (!collapsed) {
+    if (name === 'trends') renderTrends();
+    if (name === 'backups') loadBackups();
+    if (name === 'schedules') loadSchedules();
+  }
+}
+
 function unlockUI() {
   if (_unlocked) return;
   _unlocked = true;
   document.getElementById('authGate').style.display  = 'none';
   document.getElementById('mainShell').style.display = '';
-  loadBackups();
-  loadSchedules();
-  loadNotify();
-  loadSettings();
-  refreshRunMeta(); renderTrends();
+  applySectionState();
+  // Only load expanded sections; collapsed ones load on first expand to keep
+  // the initial dashboard snappy.
+  const state = _sectionState();
+  if (!state.backups) loadBackups();
+  if (!state.schedules) loadSchedules();
+  loadNotify();           // tiny payload, fine to always load
+  loadSettings();         // global retention picker is in the Backups panel head
+  refreshRunMeta();
+  if (!state.trends) renderTrends();
   setStatus('READY', 'var(--ok)', false);
   // Keep an SSE connection open while authenticated so scheduled (and any
   // server-initiated) jobs stream into the Repair Log live instead of
@@ -1299,6 +1384,7 @@ function switchApp(app) {
   // Reset UI state
   resetPhases();
   document.getElementById('progressWrap').classList.remove('visible');
+  document.querySelector('.phases').classList.remove('visible');
   document.getElementById('resultGrid').classList.remove('visible');
   selectedOps.clear();
   selectSafe();
@@ -1631,6 +1717,7 @@ function enterRunningMode({ silent = false } = {}) {
   document.getElementById('stopBtn').style.display = 'flex';
   document.getElementById('resultGrid').classList.remove('visible');
   document.getElementById('progressWrap').classList.add('visible');
+  document.querySelector('.phases').classList.add('visible');
   setStatus('RUNNING','var(--app)',true);
   document.getElementById('progressFill').style.width = '0%';
   document.getElementById('progressPct').textContent = '0%';
