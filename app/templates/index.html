@@ -156,8 +156,18 @@ header {
 #retentionDays, #instRetention { background: var(--panel); color: var(--fg, #e6e6e6); border: 1px solid var(--border); border-radius: 4px; padding: 4px 8px; font-size: 11px; font-family: inherit; cursor: pointer; }
 #retentionDays:hover, #instRetention:hover { border-color: var(--border-hi); }
 #retentionDays option, #instRetention option { background: #111820; }
-.retention-row { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 6px; background: rgba(255,255,255,.015); }
-.retention-row .retention-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+/* Retention card — groups the default + per-instance pickers into one block
+   so it's obvious they're the same setting at two scopes. */
+.retention-card { border: 1px solid var(--border); border-radius: 8px; background: rgba(255,255,255,.015); margin-bottom: 14px; overflow: hidden; }
+.retention-card-head { display: flex; align-items: center; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.02); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.retention-card-body { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.retention-card-body .retention-control + .retention-control { border-left: 1px solid var(--border); }
+@media (max-width: 720px) { .retention-card-body { grid-template-columns: 1fr; }
+  .retention-card-body .retention-control + .retention-control { border-left: none; border-top: 1px solid var(--border); } }
+.retention-control { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.retention-control-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .08em; }
+.retention-control-label strong { color: var(--app); font-weight: 600; text-transform: none; letter-spacing: 0; }
+.retention-control-src { font-size: 9px; color: var(--muted); opacity: .8; }
 .field input.auth-field { border-color: rgba(176,136,255,.4); }
 .field input.auth-field:focus { border-color: var(--dry); box-shadow: 0 0 0 1px rgba(176,136,255,.2); }
 .ops-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
@@ -601,36 +611,47 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Backups
       </div>
-      <div style="display:flex;align-items:center;gap:8px;font-size:10px;color:var(--muted)">
-        <span>Stored in /backups · keep for</span>
-        <select id="retentionDays" onchange="saveRetention()" title="Global default for how long backups are kept before auto-pruning. Individual instances can override this on the Connection panel. 'Forever' disables pruning.">
-          <option value="7">7 days</option>
-          <option value="14">14 days</option>
-          <option value="30">30 days</option>
-          <option value="60">60 days</option>
-          <option value="90">90 days</option>
-          <option value="180">180 days</option>
-          <option value="365">1 year</option>
-          <option value="0">Forever</option>
-        </select>
-        <span id="retentionSrc" style="font-size:9px;opacity:.7"></span>
-      </div>
+      <span style="font-size:10px;color:var(--muted)">Stored in <code style="color:var(--muted);background:none;padding:0">/backups</code></span>
     </div>
     <div class="panel-body">
-      <div class="retention-row">
-        <span class="retention-label">Override for the current instance:</span>
-        <select id="instRetention" onchange="saveInstRetention()" title="Per-instance retention. 'Inherit global' uses the value above (or MAX_BACKUP_AGE_DAYS if nothing is saved). 'Forever' disables pruning for this instance.">
-          <option value="">Inherit global</option>
-          <option value="7">7 days</option>
-          <option value="14">14 days</option>
-          <option value="30">30 days</option>
-          <option value="60">60 days</option>
-          <option value="90">90 days</option>
-          <option value="180">180 days</option>
-          <option value="365">1 year</option>
-          <option value="0">Forever</option>
-        </select>
-        <span id="instRetentionSrc" style="font-size:9px;color:var(--muted)"></span>
+      <div class="retention-card">
+        <div class="retention-card-head">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg>
+          <span>Backup retention</span>
+        </div>
+        <div class="retention-card-body">
+          <div class="retention-control">
+            <span class="retention-control-label">Default for all instances</span>
+            <select id="retentionDays" onchange="saveRetention()" title="Default retention. Falls through to the MAX_BACKUP_AGE_DAYS env var when nothing is saved. 'Forever' disables pruning.">
+              <option value="7">7 days</option>
+              <option value="14">14 days</option>
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days</option>
+              <option value="180">180 days</option>
+              <option value="365">1 year</option>
+              <option value="0">Forever</option>
+            </select>
+            <span id="retentionSrc" class="retention-control-src"></span>
+          </div>
+          <div class="retention-control">
+            <span class="retention-control-label">
+              This instance: <strong id="instRetentionName">—</strong>
+            </span>
+            <select id="instRetention" onchange="saveInstRetention()" title="Per-instance override. 'Inherit default' uses the value on the left. 'Forever' disables pruning for this instance only.">
+              <option value="">Inherit default</option>
+              <option value="7">7 days</option>
+              <option value="14">14 days</option>
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days</option>
+              <option value="180">180 days</option>
+              <option value="365">1 year</option>
+              <option value="0">Forever</option>
+            </select>
+            <span id="instRetentionSrc" class="retention-control-src"></span>
+          </div>
+        </div>
       </div>
       <div id="backupsPanel">
         <div class="empty-state">Click "Refresh Backups" to load. Backups from any instance show up here — restore puts the file back over the live database.</div>
@@ -1201,11 +1222,14 @@ function applyInstanceToForm(a) {
 // `retention_days` is null/undefined when this instance is inheriting; the
 // effective value is what would actually be applied at prune time.
 function syncInstRetention(a) {
-  const sel = document.getElementById('instRetention');
-  const src = document.getElementById('instRetentionSrc');
+  const sel  = document.getElementById('instRetention');
+  const src  = document.getElementById('instRetentionSrc');
+  const name = document.getElementById('instRetentionName');
   if (!sel) return;
-  const own = a.retention_days;
-  const eff = a.retention_effective_days;
+  // Label the override picker with the instance it's actually overriding for.
+  if (name) name.textContent = a?.name || a?.id || '—';
+  const own = a?.retention_days;
+  const eff = a?.retention_effective_days;
   const ownStr = (own === null || own === undefined) ? '' : String(own);
   // If the override is an odd value, slip it in as an option so the user sees
   // what's saved without us silently rounding to one of the presets.
@@ -1217,9 +1241,9 @@ function syncInstRetention(a) {
   sel.value = ownStr;
   if (src) {
     if (ownStr === '') {
-      src.textContent = `(inheriting · ${eff === 0 ? 'forever' : eff + ' days'})`;
+      src.textContent = `Using default (${eff === 0 ? 'forever' : eff + ' days'})`;
     } else {
-      src.textContent = '(per-instance)';
+      src.textContent = 'Overrides the default';
     }
   }
 }
@@ -2131,7 +2155,7 @@ async function loadSettings() {
     sel.value = days;
     const src = document.getElementById('retentionSrc');
     if (src) src.textContent = s.max_backup_age_days_source === 'saved'
-      ? '(saved)' : '(from env var)';
+      ? 'Saved here' : 'From MAX_BACKUP_AGE_DAYS env var';
   } catch (_) { /* silent — non-critical */ }
 }
 async function saveRetention() {
