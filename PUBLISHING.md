@@ -56,20 +56,36 @@ grep -rl 'yourdockerhubuser'  . | xargs sed -i 's/yourdockerhubuser/mydockerhubu
 
 ---
 
-## 5. First release
+## 5. Releasing
+
+Tagging policy (`.github/workflows/docker-publish.yml`):
+
+| You push… | Images produced | GitHub Release |
+|---|---|---|
+| a merge to `main` | `edge` | — |
+| a git tag `vX.Y.Z` | `X.Y.Z`, `X.Y`, `X`, **`latest`** | **created automatically** |
+
+So `latest` always points at the newest **released version**, and `edge`
+tracks the tip of `main` for testing ahead of a release.
+
+To cut a release:
 
 ```bash
-git tag v1.0.0
-git push origin main --tags
+# 1. Land your changes on main (via PR), and make sure CHANGELOG.md has a
+#    "## [X.Y.Z] — DATE" section — its body becomes the GitHub Release notes.
+git checkout main && git pull
+
+# 2. Tag and push the tag.
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
-The GitHub Actions workflow will:
-1. Run tests
-2. Build `linux/amd64` + `linux/arm64` images
-3. Push to Docker Hub with tags: `1.0.0`, `1.0`, `1`, `latest`
-4. Push to GitHub Container Registry (`ghcr.io`)
-5. Run Trivy security scan
-6. Update Docker Hub README
+The workflow then:
+1. Builds the `linux/amd64` image
+2. Pushes to **Docker Hub** and **GHCR** as `X.Y.Z`, `X.Y`, `X`, and `latest`
+3. **Signs** every tag with cosign (keyless / Sigstore)
+4. **Creates a GitHub Release** named `vX.Y.Z`, with notes pulled from the
+   matching `CHANGELOG.md` section plus the pull commands
 
 ---
 
@@ -86,14 +102,20 @@ Or host your own template repository and add it in Unraid under:
 
 ---
 
-## 7. Release workflow (subsequent releases)
+## 7. Subsequent releases
+
+1. Open a release PR that bumps the version banners (header subtitle +
+   repair-log greeting in `index.html`, the log banner in `server.py`), the
+   README image-tag pin, and flips the `CHANGELOG.md` `[Unreleased]` section
+   to `[X.Y.Z] — DATE`.
+2. Merge it (this updates `edge`).
+3. Tag and push:
 
 ```bash
-# Bump version in README badges if needed
-git add .
-git commit -m "feat: description of changes"
-git tag v1.1.0
-git push origin main --tags
+git checkout main && git pull
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin vX.Y.Z
 ```
 
-Docker Hub tags updated automatically via CI.
+Version images, `latest`, and the GitHub Release are all produced automatically
+(see section 5).

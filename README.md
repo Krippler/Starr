@@ -72,7 +72,10 @@ docker run -d \
 |---|---|
 | `1.1.2` | exact version — recommended pin for production |
 | `1.1` / `1` | floating minor / major |
-| `latest` | newest release |
+| `latest` | newest **released version** (updated on every version tag) |
+| `edge` | tip of `main` — newest merged code, for testing ahead of a release |
+
+> Pushing a `v*.*.*` git tag builds the version images, updates `latest`, and auto-creates a matching **GitHub Release** with notes from the [CHANGELOG](CHANGELOG.md). Merges to `main` (without a tag) only update `edge`.
 
 ---
 
