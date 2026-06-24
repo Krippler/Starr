@@ -1436,3 +1436,34 @@ def test_step_backup_prunes_per_instance(tmp_path, monkeypatch):
     srv._step_backup({"app": "sonarr", "label": "sonarr"}, str(db))
     assert not son_old.exists()     # global 7-day pruned it
     assert s4k_old.exists()         # 4K still safe
+
+
+def test_history_default_instance_excludes_named_extras(tmp_path):
+    """The 'last run' pill on the default app tab must NOT show runs that
+    actually came from a named extra of the same app.
+
+    Frontend (#52) calls /api/history?instance=sonarr for the default tab and
+    ?instance=sonarr-4k for the extra. Each must return only its own runs."""
+    from history import HistoryStore
+    h = HistoryStore(tmp_path / "h.json")
+    # Default instance runs (id == app name).
+    h.record({"app": "sonarr", "instance": "sonarr",    "status": "ok",
+              "duration_s": 10})
+    # Named-extra runs.
+    h.record({"app": "sonarr", "instance": "sonarr-4k", "status": "warning",
+              "duration_s": 20})
+    # A legacy record with no `instance` field — should fall under the default.
+    h.record({"app": "sonarr", "status": "ok", "duration_s": 30})
+
+    default = h.recent(instance="sonarr")
+    extras  = h.recent(instance="sonarr-4k")
+    assert {e["status"] for e in default} == {"ok"}      # default + legacy
+    assert {e["duration_s"] for e in default} == {10, 30}
+    assert [e["status"] for e in extras] == ["warning"]
+    assert [e["duration_s"] for e in extras] == [20]
+
+    # And different apps stay isolated too.
+    h.record({"app": "radarr", "instance": "radarr", "status": "error",
+              "duration_s": 5})
+    assert h.recent(instance="radarr")[0]["status"] == "error"
+    assert all(e["app"] == "sonarr" for e in h.recent(instance="sonarr"))
