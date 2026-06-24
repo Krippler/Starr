@@ -3,16 +3,19 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
-## [Unreleased]
+## [1.1.2] — 2026-06-24
+
+Adjustable backup retention — globally and per instance — plus a comprehensive
+docs and UI-label sweep.
 
 ### Added
 - **Adjustable backup retention from the dashboard** (#43) — picker in the Backups panel header with `7 / 14 / 30 / 60 / 90 / 180 / 365 / Forever`. New endpoints `GET` / `PUT /api/settings`. `MAX_BACKUP_AGE_DAYS` env var remains the boot fallback.
 - **Per-instance backup retention** (#44) — each instance can override the global retention. A daily-backed Sonarr can keep 14 days while a weekly Sonarr-4K keeps a year, without one prune window chopping the other's files. New endpoint `PUT /api/instances/<id>/retention` (`null` clears the override). `/api/instances` payload now includes `retention_days` (override) and `retention_effective_days` (what would actually apply).
 
 ### Changed
-- **README rewritten** to reflect everything shipped since the `/data/<app>` era — single `/appdata` mount + Docker auto-discovery, multi-instance, run history, trends, restore, mid-VACUUM cancel, notifications, retention, Save Credentials. Complete API reference grouped by area.
-- **UI labels and tooltips** tightened around the instance model, retention inheritance, and the Save Credentials affordance.
-- **Unraid template overview** updated with the full current feature set.
+- **README rewritten** (#45) to reflect everything shipped since the `/data/<app>` era — single `/appdata` mount + Docker auto-discovery, multi-instance, run history, trends, restore, mid-VACUUM cancel, notifications, retention, Save Credentials. Complete API reference grouped by area.
+- **UI labels and tooltips** (#45) tightened around the instance model, retention inheritance, and the Save Credentials affordance.
+- **Unraid template overview** (#45) updated with the full current feature set.
 
 ## [1.1.1] — 2026-06-22
 
