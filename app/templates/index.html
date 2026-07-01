@@ -147,6 +147,11 @@ header {
   background: rgba(255,255,255,.04); border: 1px solid var(--border);
 }
 .panel-title { display: flex; align-items: center; gap: 8px; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--app); font-weight: 500; transition: color .4s; }
+/* Right-hand side of a panel-head: status text, toggles, and action buttons
+   packed onto one line (wrapping to a right-aligned second line on narrow
+   viewports) — the "everything for this panel lives in its own bar" pattern
+   used by Connection / Repair Operations / Backups / Scheduled Repairs. */
+.panel-head-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
 .panel-body { padding: 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
 @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
@@ -288,7 +293,7 @@ header {
 .btn-danger:hover { background: var(--err-dim); }
 .btn-sm { padding: 6px 12px; font-size: 10px; }
 .action-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.run-meta { margin-left: auto; font-size: 11px; color: var(--muted); display: flex; gap: 14px; align-items: center; }
+.run-meta { font-size: 11px; color: var(--muted); display: flex; gap: 14px; align-items: center; }
 .run-meta .rm-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 5px; background: var(--muted); }
 .run-meta .rm-ok   { background: var(--ok, #3ecf8e); }
 .run-meta .rm-warn { background: var(--warn, #e3b341); }
@@ -475,22 +480,8 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
         Connection
       </div>
-      <span id="connStatus" style="font-size:10px;color:var(--muted)">Not tested</span>
-    </div>
-    <div class="panel-body">
-      <div class="form-grid">
-        <div class="field" style="grid-column:1/-1">
-          <label>URL <span style="color:var(--muted);font-size:9px;margin-left:6px">http://host:port[/urlbase] — leave blank for auto-discovery</span></label>
-          <input id="appUrl" placeholder="http://sonarr:8989">
-        </div>
-        <div class="field" style="grid-column:1/-1">
-          <label>API Key</label>
-          <input id="apikey" type="password" placeholder="Settings › General › API Key">
-        </div>
-      </div>
-      <div id="discoveryHint" style="display:none;font-size:10px;line-height:1.5;color:var(--ok);background:rgba(0,200,127,.08);border:1px solid rgba(0,200,127,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
-      <div id="discoveryWarn" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
-      <div class="action-row">
+      <div class="panel-head-actions">
+        <span id="connStatus" style="font-size:10px;color:var(--muted)">Not tested</span>
         <button class="btn btn-ghost btn-sm" onclick="detectContainers()" id="detectBtn">
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
           Detect *arr containers
@@ -505,6 +496,20 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
           Test Connection
         </button>
       </div>
+    </div>
+    <div class="panel-body">
+      <div class="form-grid">
+        <div class="field">
+          <label>URL <span style="color:var(--muted);font-size:9px;margin-left:6px">http://host:port[/urlbase] — leave blank for auto-discovery</span></label>
+          <input id="appUrl" placeholder="http://sonarr:8989">
+        </div>
+        <div class="field">
+          <label>API Key</label>
+          <input id="apikey" type="password" placeholder="Settings › General › API Key">
+        </div>
+      </div>
+      <div id="discoveryHint" style="display:none;font-size:10px;line-height:1.5;color:var(--ok);background:rgba(0,200,127,.08);border:1px solid rgba(0,200,127,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
+      <div id="discoveryWarn" style="display:none;font-size:10px;line-height:1.5;color:var(--warn);background:rgba(255,193,7,.08);border:1px solid rgba(255,193,7,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
     </div>
   </div>
 
@@ -558,7 +563,8 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         Repair Operations
         <span id="selCount" class="ops-summary">0 selected</span>
       </div>
-      <div style="display:flex;gap:12px">
+      <div class="panel-head-actions">
+        <span id="runMeta" class="run-meta"></span>
         <label style="display:flex;align-items:center;gap:6px;font-size:10px;color:var(--muted);cursor:pointer">
           <input type="checkbox" id="dryRunCheck" style="accent-color:var(--dry)">
           <span style="color:var(--dry)">Dry Run</span>
@@ -568,6 +574,14 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
           <input type="checkbox" id="skipShutdownCheck">
           Skip Shutdown
         </label>
+        <button class="btn btn-primary btn-sm" id="runBtn" onclick="startRepair()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Run Repair
+        </button>
+        <button class="btn btn-danger btn-sm" id="stopBtn" onclick="stopRepair()" style="display:none">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+          Stop
+        </button>
       </div>
     </div>
     <div class="panel-body">
@@ -583,22 +597,6 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       </div>
       <div class="ops-grid" id="opsGrid"></div>
     </div>
-  </div>
-
-  <div class="action-row" style="margin-bottom:20px">
-    <button class="btn btn-primary" id="runBtn" onclick="startRepair()">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-      Run Repair
-    </button>
-    <button class="btn btn-danger" id="stopBtn" onclick="stopRepair()" style="display:none">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-      Stop
-    </button>
-    <button class="btn btn-ghost" onclick="loadBackups()">
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
-      Refresh Backups
-    </button>
-    <span id="runMeta" class="run-meta"></span>
   </div>
 
   <!-- ── Trends ─────────────────────────────────────────────────────────────── -->
@@ -623,7 +621,13 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
         Backups
       </div>
-      <span style="font-size:10px;color:var(--muted)">Stored in <code style="color:var(--muted);background:none;padding:0">/backups</code></span>
+      <div class="panel-head-actions">
+        <span style="font-size:10px;color:var(--muted)">Stored in <code style="color:var(--muted);background:none;padding:0">/backups</code></span>
+        <button class="btn btn-ghost btn-sm" onclick="loadBackups()">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3"/></svg>
+          Refresh Backups
+        </button>
+      </div>
     </div>
     <div class="panel-body">
       <div class="retention-card">

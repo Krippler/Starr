@@ -3,6 +3,16 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [Unreleased]
+
+### Changed
+- **Dashboard density pass** — action buttons now live in the panel bar they belong to instead of a separate row below the panel, matching the "Add Schedule" pattern already used by Scheduled Repairs:
+  - **Run Repair** / **Stop** move into the Repair Operations bar (next to the Dry Run / Skip Shutdown toggles); the last-run pill moves there too.
+  - **Refresh Backups** moves into the Backups bar (next to "Stored in /backups").
+  - **Detect *arr containers** / **Save Credentials** / **Test Connection** move into the Connection bar (next to the connection-status text).
+  - The now-empty standalone action row between Repair Operations and Trends is removed.
+  - **URL** and **API Key** sit side-by-side on wide viewports instead of stacking full-width (existing `600px` breakpoint still stacks them on narrow screens).
+
 ## [1.2.1] — 2026-07-01
 
 Patch release: a shipped-defaults security fix, plus the release-automation
