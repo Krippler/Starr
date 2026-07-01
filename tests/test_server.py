@@ -4,6 +4,7 @@ Run: pytest tests/ -v
 """
 
 import json
+import re
 import sys
 import os
 import tempfile
@@ -1467,3 +1468,79 @@ def test_history_default_instance_excludes_named_extras(tmp_path):
               "duration_s": 5})
     assert h.recent(instance="radarr")[0]["status"] == "error"
     assert all(e["app"] == "sonarr" for e in h.recent(instance="sonarr"))
+
+
+# ── Auth: SECRET_KEY defaults + comparison ──────────────────────────────────────
+DEFAULT_SECRET = "change-me-in-production"
+
+
+def test_shipped_defaults_match_the_insecure_sentinel():
+    """docker-compose.yml and .env.example must default SECRET_KEY to the
+    EXACT sentinel server.py checks for. If they drift (e.g. someone sets
+    compose to 'change-me' while the app checks 'change-me-in-production'),
+    an out-of-the-box `docker compose up` with no .env silently authenticates
+    every request against a publicly-known password instead of falling back
+    to the loud unauthenticated-with-a-warning state."""
+    repo_root = os.path.join(os.path.dirname(__file__), "..")
+
+    compose = open(os.path.join(repo_root, "docker-compose.yml")).read()
+    m = re.search(r"SECRET_KEY:\s*\$\{SECRET_KEY:-([^}]+)\}", compose)
+    assert m, "docker-compose.yml must set a SECRET_KEY default"
+    assert m.group(1) == DEFAULT_SECRET
+
+    env_example = open(os.path.join(repo_root, ".env.example")).read()
+    m = re.search(r"^SECRET_KEY=(.*)$", env_example, re.MULTILINE)
+    assert m, ".env.example must set SECRET_KEY"
+    assert m.group(1).strip() == DEFAULT_SECRET
+
+    # And both places server.py hardcodes the sentinel (the Config class
+    # default and the require_api_key check) must actually agree with it —
+    # if they ever drift apart, the default becomes indistinguishable from a
+    # deliberately-chosen (insecure) key and the warning stops firing.
+    server_src = open(os.path.join(repo_root, "app", "server.py")).read()
+    assert f'"{DEFAULT_SECRET}"' in server_src
+    assert server_src.count(f'"{DEFAULT_SECRET}"') >= 2
+
+
+def test_default_secret_key_disables_enforcement_with_warning(client, caplog):
+    """When SECRET_KEY is still the sentinel, every request is let through
+    (no key needed) but a warning is logged so it's visible in `docker logs`."""
+    srv.app.config["SECRET_KEY"] = DEFAULT_SECRET
+    with caplog.at_level("WARNING", logger="starr-repair"):
+        r = client.get("/api/backups")
+    assert r.status_code == 200
+    assert any("SECRET_KEY is still the default" in rec.message
+               for rec in caplog.records)
+
+
+def test_real_secret_key_requires_matching_api_key(client):
+    srv.app.config["SECRET_KEY"] = "a-real-secret"
+    try:
+        # No key at all -> 401
+        assert client.get("/api/backups").status_code == 401
+        # Wrong key -> 401
+        assert client.get("/api/backups",
+                          headers={"X-Api-Key": "wrong"}).status_code == 401
+        # Wrong-length key (exercises the hmac.compare_digest path with
+        # mismatched lengths rather than just mismatched content) -> 401
+        assert client.get("/api/backups",
+                          headers={"X-Api-Key": "x"}).status_code == 401
+        # Correct key -> 200
+        assert client.get("/api/backups",
+                          headers={"X-Api-Key": "a-real-secret"}).status_code == 200
+        # Correct key via query param (used by the SSE stream) -> 200
+        assert client.get("/api/backups?api_key=a-real-secret").status_code == 200
+    finally:
+        srv.app.config["SECRET_KEY"] = DEFAULT_SECRET
+
+
+def test_missing_api_key_does_not_crash_comparison(client):
+    """hmac.compare_digest requires two str/bytes args of the same type —
+    make sure the None-coalescing (`or ""`) actually prevents a 500 when no
+    key is supplied at all."""
+    srv.app.config["SECRET_KEY"] = "a-real-secret"
+    try:
+        r = client.get("/api/backups")
+        assert r.status_code == 401
+    finally:
+        srv.app.config["SECRET_KEY"] = DEFAULT_SECRET
