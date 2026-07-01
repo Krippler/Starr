@@ -5,6 +5,10 @@ Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/kripp
 
 ## [Unreleased]
 
+### Security
+- **Shipped `SECRET_KEY` defaults now match the app's "insecure default" sentinel** — `docker-compose.yml` and `.env.example` previously defaulted to `change-me` / `change-me-to-a-random-string`, which are *different* strings from the one `server.py` checks for (`change-me-in-production`). That meant an out-of-the-box `docker compose up` with no `.env` edits was silently **authenticating every request against a value published in this repo**, with no warning and no "insecure" banner in the dashboard (both only fire when the key equals the exact sentinel). Both files now default to the sentinel, so an unset key is loud and visible instead of quietly insecure.
+- **API-key comparison is now constant-time** (`hmac.compare_digest`) instead of `!=`, closing a minor timing side-channel in `require_api_key`.
+
 ### Changed
 - **Releases are now fully automatic** — merging a release PR (one that flips `CHANGELOG.md`'s `[Unreleased]` section to `[X.Y.Z]`) is enough. CI detects the version flip, publishes the version pins (`X.Y.Z` / `X.Y` / `X`), moves **`latest`** to that release, auto-creates the `vX.Y.Z` git tag, and creates the matching GitHub Release — all in the same workflow run. Manually pushing a `v*.*.*` tag still works (useful for re-running the release pipeline). (`.github/workflows/docker-publish.yml`)
 

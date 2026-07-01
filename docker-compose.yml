@@ -31,7 +31,11 @@ services:
       # Web server
       PORT: 8877
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
-      SECRET_KEY: ${SECRET_KEY:-change-me}
+      # Must match the sentinel in app/server.py exactly — that's what makes
+      # Starr treat an unset key as "insecure default" (loud warning + a
+      # dashboard banner) instead of silently authenticating with a
+      # publicly-known password.
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}
 
       # Backups
       BACKUP_DIR: /backups

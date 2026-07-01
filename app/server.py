@@ -16,6 +16,7 @@ Endpoints
   GET  /readyz             → readiness probe
 """
 
+import hmac
 import json
 import logging
 import os
@@ -134,8 +135,12 @@ def require_api_key(f):
         provided = (
             request.headers.get("X-Api-Key")
             or request.args.get("api_key")
+            or ""
         )
-        if provided != secret:
+        # Constant-time compare — a plain != leaks how many leading characters
+        # matched via response timing (the LAN-only threat model here still
+        # doesn't make this a priority, but it's a one-line fix).
+        if not hmac.compare_digest(provided, secret):
             return jsonify({"error": "Unauthorized — invalid or missing API key"}), 401
         return f(*args, **kwargs)
     return decorated
