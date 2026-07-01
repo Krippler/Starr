@@ -3,7 +3,9 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
-## [Unreleased]
+## [1.2.2] — 2026-07-01
+
+Patch release: a dashboard density pass.
 
 ### Changed
 - **Dashboard density pass** — action buttons now live in the panel bar they belong to instead of a separate row below the panel, matching the "Add Schedule" pattern already used by Scheduled Repairs:
