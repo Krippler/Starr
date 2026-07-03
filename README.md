@@ -100,7 +100,7 @@ docker run -d \
 | `PUID` | `99` (Unraid) / `1000` (compose) | UID the container runs as. Must own — or share a group with — your *arr config dirs. |
 | `PGID` | `100` (Unraid) / `1000` (compose) | GID the container runs as. |
 | `PORT` | `8877` | Web UI listen port. |
-| `SECRET_KEY` | _(required)_ | Web UI access key. Without it the dashboard runs unauthenticated and logs a warning on every request. |
+| `SECRET_KEY` | _(required)_ | Web UI access key. Leave it at the shipped default (`change-me-in-production`, which `docker-compose.yml` and `.env.example` both use) and the dashboard runs **unauthenticated** — logging a warning on every request and showing an "insecure" banner in the UI. Set a strong random value (e.g. `openssl rand -hex 32`) to enforce the Web Key gate. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` `INFO` `WARNING` `ERROR`. |
 | `APPDATA_DIR` | `/appdata` | Container path of the host appdata root (rarely needs changing). |
 | `BACKUP_DIR` | `/backups` | Backup output directory inside the container. |
@@ -221,6 +221,7 @@ All protected endpoints require an `X-Api-Key` header matching your `SECRET_KEY`
 | `GET` | `/` | No | Dashboard web UI |
 | `GET` | `/healthz` | No | Liveness probe `{"status":"ok"}` |
 | `GET` | `/readyz` | No | Readiness probe |
+| `GET` | `/api/config` | No | Public UI config — reports whether `SECRET_KEY` is still the insecure default (drives the dashboard's security banner). No secrets returned. |
 
 ### Repair lifecycle
 | Method | Endpoint | Auth | Description |
@@ -353,7 +354,8 @@ Starr/
 ## 🔐 Security Notes
 
 - The container runs as **non-root** — `PUID:PGID` (entrypoint drops via gosu).
-- The Web UI is protected by `SECRET_KEY`. Leave it unset and Starr runs unauthenticated, logging a warning on every request. Always set it on a shared network.
+- The Web UI is protected by `SECRET_KEY`. The shipped compose/`.env` defaults are the exact insecure-default sentinel (`change-me-in-production`), so an unconfigured install fails **loud** — unauthenticated, with a warning logged on every request and an "insecure" banner in the dashboard — rather than silently authenticating against a value published in this repo. Always set a strong random value on a shared network.
+- The API-key check uses a constant-time comparison (`hmac.compare_digest`), so it doesn't leak how many leading characters of the key matched via response timing.
 - API keys saved via the UI's **Save Credentials** button are persisted server-side to `/backups/.starr-instance-overrides.json` and are masked in the form.
 - API keys are never echoed in the response body for `/api/repair/status` or the SSE stream.
 - Place behind a reverse proxy with extra auth (Authelia, Authentik, nginx basic auth) if exposed beyond your LAN.
