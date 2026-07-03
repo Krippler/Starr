@@ -9,6 +9,8 @@
   <Project>https://github.com/Krippler/Starr</Project>
   <Support>https://github.com/Krippler/Starr/issues</Support>
   <ReadmeURL>https://github.com/Krippler/Starr/blob/main/README.md</ReadmeURL>
+  <Icon>https://raw.githubusercontent.com/Krippler/Starr/main/templates/starr-icon.png</Icon>
+  <Beta>False</Beta>
   <Overview>
     Web UI for diagnosing and repairing the SQLite databases used by Sonarr, Radarr,
     Lidarr, Sportarr, Readarr, Prowlarr, Whisparr, and Bazarr.
@@ -48,16 +50,16 @@
 
   <!-- ── Volumes ────────────────────────────────────────────────────────── -->
   <Config Name="Appdata root" Target="/appdata" Default="/mnt/user/appdata" Mode="rw"
-          Description="Host appdata root. Starr uses Docker introspection to find each *arr's /config inside this mount, so a single path mount replaces the four per-app mounts the old template had. Read-write because VACUUM/REINDEX/FK repair write to the source DB."
+          Description="Host appdata root (contains each *arr's config folder). Starr uses Docker introspection to find each *arr's /config inside this single mount, so you don't need a separate mount per app. Read-write is required because VACUUM/REINDEX/FK repair write to the source database."
           Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata</Config>
 
   <Config Name="Backups" Target="/backups" Default="/mnt/user/appdata/starr/backups" Mode="rw"
           Description="Where timestamped database backups are stored. Backups are auto-pruned based on MAX_BACKUP_AGE_DAYS."
           Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/starr/backups</Config>
 
-  <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw"
-          Description="Mount the host Docker socket so Starr can auto-discover *arr containers and stop/start them around repairs (more reliable than the app's shutdown API on hosts with a container restart policy). Leave blank to disable Docker-managed operation."
-          Type="Path" Display="always" Required="true" Mask="false">/var/run/docker.sock</Config>
+  <Config Name="Docker Socket (optional)" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw"
+          Description="OPTIONAL, but recommended on Unraid. Mounting the host Docker socket lets Starr auto-discover your *arr containers and stop/start them around a repair — more reliable than the app's shutdown API when a container restart policy is in play. NOTE: the Docker socket grants root-equivalent control of the host Docker daemon (the same trade-off as Portainer/Watchtower/Dockge). If you'd rather not grant that, clear this field: Starr falls back to each app's HTTP shutdown API and you enter URLs/API keys manually."
+          Type="Path" Display="always" Required="false" Mask="false">/var/run/docker.sock</Config>
 
   <!-- ── User / group (Unraid: 99:100 nobody:users) ─────────────────────── -->
   <Config Name="PUID" Target="PUID" Default="99" Mode=""
@@ -69,7 +71,7 @@
 
   <!-- ── Security ───────────────────────────────────────────────────────── -->
   <Config Name="SECRET_KEY" Target="SECRET_KEY" Default="" Mode=""
-          Description="Web UI access key. Anyone who can reach the port can use the UI without this set — pick a strong random value."
+          Description="REQUIRED. Web UI access key (your 'Web Key' at the login gate). Set a strong random value — e.g. run: openssl rand -hex 32. If left blank / at the built-in default, Starr runs UNAUTHENTICATED: anyone who can reach the port gets in, and the dashboard shows an 'insecure' banner. Always set this on a shared network."
           Type="Variable" Display="always" Required="true" Mask="true"/>
 
   <!-- ── Logging / backup retention ─────────────────────────────────────── -->

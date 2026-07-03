@@ -3,6 +3,15 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [Unreleased]
+
+### Changed
+- **Unraid Community Applications readiness** — the template (`templates/unraid.xml`) is now ready to submit to [CA](https://ca.unraid.net/):
+  - Added a template **`<Icon>`** (`templates/starr-icon.png`, a 256×256 PNG) — CA rejects templates without one.
+  - Added `<Beta>False</Beta>`.
+  - The **Docker socket mount is now optional** (`Required="false"`) instead of mandatory, with a description that spells out the root-equivalent trade-off and the shutdown-API fallback — CA moderators scrutinise forced `docker.sock` mounts, and the app works without it.
+  - `SECRET_KEY` description rewritten to match the app's actual security behaviour (unset ⇒ unauthenticated + insecure banner).
+
 ## [1.2.2] — 2026-07-01
 
 Patch release: a dashboard density pass.
