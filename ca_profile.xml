@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Maintainer>
+  <Icon>https://raw.githubusercontent.com/Krippler/Starr/main/templates/starr-icon.png</Icon>
+  <Profile>
+    Starr — a self-hosted web tool for diagnosing and repairing the SQLite
+    databases behind the *arr apps: Sonarr, Radarr, Lidarr, Sportarr, Readarr,
+    Prowlarr, Whisparr, and Bazarr. It safely stops the target app, takes a
+    compressed timestamped backup, runs SQLite PRAGMA repairs (integrity check,
+    foreign-key repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE) on the idle
+    database, then brings the app back online — with a cron scheduler, multiple
+    instances per app, run history, one-click restore, per-instance backup
+    retention, and completion notifications. Images are built for linux/amd64,
+    published to Docker Hub and GHCR, and signed with cosign.
+  </Profile>
+</Maintainer>
