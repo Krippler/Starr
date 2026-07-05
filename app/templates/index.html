@@ -155,6 +155,9 @@ header {
 .panel-body { padding: 16px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 14px; }
 @media (max-width: 600px) { .form-grid { grid-template-columns: 1fr; } }
+/* Connection fields (URL / API Key / Database path) flow to as many columns
+   as fit: 3-up on a wide screen, 2-up mid, 1-up narrow. */
+.conn-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 14px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field label { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
 .field input, .field select {
@@ -499,18 +502,18 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       </div>
     </div>
     <div class="panel-body">
-      <div class="form-grid">
+      <div class="conn-grid">
         <div class="field">
-          <label>URL <span style="color:var(--muted);font-size:9px;margin-left:6px">http://host:port[/urlbase] — leave blank for auto-discovery</span></label>
+          <label>URL <span style="color:var(--muted);font-size:9px;margin-left:6px">host:port — blank to auto-discover</span></label>
           <input id="appUrl" placeholder="http://sonarr:8989">
         </div>
         <div class="field">
           <label>API Key</label>
           <input id="apikey" type="password" placeholder="Settings › General › API Key">
         </div>
-        <div class="field" style="grid-column:1/-1">
-          <label>Database path <span style="color:var(--muted);font-size:9px;margin-left:6px">optional — only if the DB name differs from the default (e.g. Whisparr v2 uses <code>whisparr2.db</code>). A bare filename resolves next to the auto-detected DB; or give a full container path.</span></label>
-          <input id="appDbPath" placeholder="auto — e.g. whisparr2.db or /appdata/whisparr/whisparr2.db">
+        <div class="field">
+          <label>Database path <span id="dbPathHint" style="color:var(--muted);font-size:9px;margin-left:6px">optional — only if it differs from the default</span></label>
+          <input id="appDbPath" placeholder="auto — sonarr.db">
         </div>
       </div>
       <div id="discoveryHint" style="display:none;font-size:10px;line-height:1.5;color:var(--ok);background:rgba(0,200,127,.08);border:1px solid rgba(0,200,127,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
@@ -970,6 +973,19 @@ function currentInstance() {
 function updatePlaceholders(app) {
   const cfg = APPS[app];
   document.getElementById('appUrl').placeholder = `http://${app}:${cfg.port}`;
+  // Database-path field: show THIS app's default DB filename, not a generic
+  // (always-Whisparr) example. dbPlaceholder is like "/config/sonarr.db".
+  const dbName = (cfg.dbPlaceholder || `${app}.db`).split('/').pop();
+  const dbInput = document.getElementById('appDbPath');
+  const dbHint  = document.getElementById('dbPathHint');
+  if (dbInput) dbInput.placeholder = `auto — ${dbName}`;
+  if (dbHint) {
+    // Whisparr is the one app with a well-known non-default (v2 = whisparr2.db);
+    // call it out only there, keep every other app's hint clean.
+    dbHint.innerHTML = app === 'whisparr'
+      ? `optional — set if it differs (v2 uses <code>whisparr2.db</code>)`
+      : `optional — only if it differs from <code>${escHtml(dbName)}</code>`;
+  }
   syncShutdownWarning();
 }
 
