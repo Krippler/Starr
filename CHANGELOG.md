@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [Unreleased]
+
+### Changed
+- **Added an "as-is, no warranty / use at your own risk" disclaimer** to the top of the README, the Unraid template `<Overview>`, and `ca_profile.xml` — noting the tool has been reliable in testing but the authors accept no responsibility for data loss or database damage, and users should keep their own backups.
+
 ## [1.2.4] — 2026-07-05
 
 Patch release: polish for the Database path field shipped in 1.2.3.

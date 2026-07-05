@@ -7,6 +7,8 @@
 
 **Web UI for diagnosing and repairing the SQLite databases used by Sonarr, Radarr, Lidarr, Sportarr, Readarr, Prowlarr, Whisparr, and Bazarr.**
 
+> ⚠️ **Use at your own risk.** Starr edits live SQLite databases (and always backs them up first). It's been reliable in our own testing, but it's provided **as-is, with no warranty** — the authors accept **no responsibility for any data loss or database damage**. Keep your own backups.
+
 > Safely stops the *arr container, takes a timestamped backup, runs SQLite PRAGMAs on the idle database, streams every log line live to the browser, then brings the app back online — with scheduling, multi-instance support, notifications, restore, and per-instance backup retention.
 
 ---
