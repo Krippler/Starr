@@ -3,6 +3,13 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.2.4] — 2026-07-05
+
+Patch release: polish for the Database path field shipped in 1.2.3.
+
+### Changed
+- **Database path field is now app-aware and more concise** ([#65](https://github.com/Krippler/Starr/pull/65)) — the hint and placeholder reflect the *selected* app's default DB filename (`sonarr.db` on Sonarr, `radarr.db` on Radarr, …) instead of always citing Whisparr; the `whisparr2.db` example now only appears on the Whisparr tab. Copy trimmed to a one-liner, and on wide screens the field flows onto the same row as URL + API Key (wrapping gracefully as the window narrows).
+
 ## [1.2.3] — 2026-07-05
 
 ### Added
