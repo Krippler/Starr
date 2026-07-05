@@ -157,6 +157,9 @@ Almost always a URL or network reachability issue:
 - **Bridge IP vs published port** — if your *arr container is on Docker's default `bridge` network, the host IP hairpins through NAT, which doesn't always work from another bridge container. Either put Starr + the *arr apps on the **same user-defined network** (then names like `sonarr` resolve), or use the bridge IP that Docker discovery shows in the Connection panel hint.
 - **Wrong API version** — Sonarr / Radarr / Sportarr / Whisparr use `/api/v3/…`; Lidarr / Readarr / Prowlarr use `/api/v1/…`; Bazarr uses a versionless `/api/…`. Starr already handles this per app — only relevant if you're forking and adding a new *arr.
 
+### "Could not locate this app's database file" (non-standard DB name)
+Some forks/variants name their database differently — e.g. hotio's **Whisparr v2** uses `whisparr2.db` instead of `whisparr.db`. Set the DB name in the **Database path** field on the Connection panel (or the DB-path field when adding an instance): enter just the filename (`whisparr2.db` — resolved next to the auto-detected DB) or a full container path (`/appdata/whisparr/whisparr2.db`). Click **Save Credentials** to persist it for scheduled runs and restore.
+
 ### "apikey is required (request body or env)" when a schedule runs
 The dashboard's API Key field was form-only state before v1.1.1. Fix: enter the key, click **Save Credentials**, then **Run now** on the schedule — it'll be persisted to `.starr-instance-overrides.json` so future scheduled runs find it.
 
