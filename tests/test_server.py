@@ -1544,3 +1544,74 @@ def test_missing_api_key_does_not_crash_comparison(client):
         assert r.status_code == 401
     finally:
         srv.app.config["SECRET_KEY"] = DEFAULT_SECRET
+
+
+# ── Custom DB name / db_path override (issue #62) ───────────────────────────────
+def test_resolve_db_override(monkeypatch, tmp_path):
+    srv.app.config["APPDATA_DIR"] = tmp_path / "data"
+    # No discovery → bare filename resolves against APPDATA_DIR/<app>/
+    monkeypatch.setattr(srv, "_discovered_for", lambda a: {})
+    got = srv._resolve_db_override("whisparr", "whisparr2.db")
+    assert got == str(tmp_path / "data" / "whisparr" / "whisparr2.db")
+    # Absolute path is used verbatim
+    assert srv._resolve_db_override("whisparr", "/x/y/whisparr2.db") == "/x/y/whisparr2.db"
+    # Empty → ""
+    assert srv._resolve_db_override("whisparr", "") == ""
+    assert srv._resolve_db_override("whisparr", None) == ""
+    # With discovery → bare filename resolves next to the discovered DB
+    monkeypatch.setattr(srv, "_discovered_for",
+                        lambda a: {"db_path": "/appdata/whisparr/whisparr.db"})
+    assert srv._resolve_db_override("whisparr", "whisparr2.db") == \
+        "/appdata/whisparr/whisparr2.db"
+
+
+def test_preflight_uses_db_path_override(monkeypatch, tmp_path):
+    """A bare-filename db_path override should let preflight find a
+    non-standard DB (e.g. whisparr2.db) under APPDATA_DIR/<app>/."""
+    srv.app.config["APPDATA_DIR"] = tmp_path / "data"
+    dbdir = tmp_path / "data" / "whisparr"
+    dbdir.mkdir(parents=True)
+    (dbdir / "whisparr2.db").write_bytes(b"x" * 2048)   # exists; whisparr.db does NOT
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: {"version": "2.0", "osName": "linux"})
+    monkeypatch.setattr(srv, "_discovered_for", lambda a: {})
+    srv._job.reset()
+    cfg = {"app": "whisparr", "host": "h", "port": 6969, "apikey": "k",
+           "urlbase": "", "api": "v3", "db_path": "whisparr2.db"}
+    resolved = srv._step_preflight(cfg)
+    assert resolved == str(dbdir / "whisparr2.db")
+    # Without the override, the default whisparr.db doesn't exist → preflight fails
+    srv._job.reset()
+    cfg2 = dict(cfg); cfg2.pop("db_path")
+    assert srv._step_preflight(cfg2) is None
+
+
+def test_instances_expose_db_path_override(client, tmp_path):
+    from instances import InstanceStore
+    from settings import SettingsStore
+    srv._instances = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    srv._settings = SettingsStore(tmp_path / "set.json")
+    # Save a db_path override on the default whisparr instance via credentials.
+    srv.app.config["WHISPARR_APIKEY"] = "wk"
+    try:
+        r = client.put("/api/instances/whisparr/credentials",
+                       data=json.dumps({"db_path": "whisparr2.db"}),
+                       content_type="application/json")
+        assert r.status_code == 200
+        items = json.loads(client.get("/api/instances").data)
+        w = next(i for i in items if i["id"] == "whisparr")
+        assert w["db_path_override"] == "whisparr2.db"
+    finally:
+        srv.app.config["WHISPARR_APIKEY"] = ""
+
+
+def test_apply_instance_carries_db_path_override(tmp_path):
+    from instances import InstanceStore
+    srv._instances = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    srv._instances.set_override("whisparr", {"db_path": "whisparr2.db"})
+    cfg = {"instance_id": "whisparr", "ops": ["integrity"]}
+    assert srv._apply_instance(cfg) is None
+    assert cfg["db_path"] == "whisparr2.db"     # override reaches the repair cfg
+    # Explicit request-body db_path wins over the saved override
+    cfg2 = {"instance_id": "whisparr", "db_path": "custom.db"}
+    srv._apply_instance(cfg2)
+    assert cfg2["db_path"] == "custom.db"

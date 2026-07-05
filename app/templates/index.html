@@ -460,6 +460,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       <input id="instUrl"       placeholder="URL  http://host:port[/urlbase]">
       <input id="instApikey"    placeholder="API Key" type="password">
       <input id="instContainer" placeholder="Container name (optional)">
+      <input id="instDbPath"    placeholder="DB path (optional, e.g. whisparr2.db)">
       <button class="btn btn-primary btn-sm" id="instSaveBtn" onclick="saveInstance()">Save</button>
       <button class="btn btn-ghost btn-sm" onclick="closeInstanceForm()">Cancel</button>
     </div>
@@ -506,6 +507,10 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
         <div class="field">
           <label>API Key</label>
           <input id="apikey" type="password" placeholder="Settings › General › API Key">
+        </div>
+        <div class="field" style="grid-column:1/-1">
+          <label>Database path <span style="color:var(--muted);font-size:9px;margin-left:6px">optional — only if the DB name differs from the default (e.g. Whisparr v2 uses <code>whisparr2.db</code>). A bare filename resolves next to the auto-detected DB; or give a full container path.</span></label>
+          <input id="appDbPath" placeholder="auto — e.g. whisparr2.db or /appdata/whisparr/whisparr2.db">
         </div>
       </div>
       <div id="discoveryHint" style="display:none;font-size:10px;line-height:1.5;color:var(--ok);background:rgba(0,200,127,.08);border:1px solid rgba(0,200,127,.25);border-radius:6px;padding:8px 10px;margin-bottom:12px"></div>
@@ -1229,6 +1234,10 @@ function applyInstanceToForm(a) {
   if (!a) { renderDiscoveryHints({ url:'', discovered:false, missing:true }); return; }
   document.getElementById('appUrl').value = a.url || '';
   document.getElementById('apikey').value = a.apikey || '';
+  // Only show a saved db_path OVERRIDE here; the auto-discovered path is shown
+  // in the discovery hint, so we leave the field on its "auto" placeholder
+  // unless the user has explicitly overridden it.
+  document.getElementById('appDbPath').value = a.db_path_override || '';
   renderDiscoveryHints(a);
   syncShutdownWarning();
   syncInstRetention(a);
@@ -1326,6 +1335,7 @@ function openInstanceForm(edit) {
   document.getElementById('instUrl').value       = edit ? (edit.url || '') : '';
   document.getElementById('instApikey').value    = edit ? (edit.apikey || '') : '';
   document.getElementById('instContainer').value = edit ? (edit.container_name || '') : '';
+  document.getElementById('instDbPath').value    = edit ? (edit.db_path || '') : '';
   document.getElementById('instSaveBtn').textContent = edit ? 'Update' : 'Save';
   document.getElementById('instanceForm').style.display = 'flex';
 }
@@ -1345,6 +1355,7 @@ async function saveInstance() {
     url:            document.getElementById('instUrl').value.trim(),
     apikey:         document.getElementById('instApikey').value.trim(),
     container_name: document.getElementById('instContainer').value.trim(),
+    db_path:        document.getElementById('instDbPath').value.trim(),
   };
   if (!payload.name || !payload.url) {
     logLine('WARN', 'Instance needs at least a name and URL.', 'warn'); return;
@@ -1412,8 +1423,9 @@ function switchApp(app) {
   updatePlaceholders(app);
 
   // Clear app-specific fields so the previous app's values don't carry over
-  document.getElementById('appUrl').value  = '';
-  document.getElementById('apikey').value  = '';
+  document.getElementById('appUrl').value    = '';
+  document.getElementById('apikey').value    = '';
+  document.getElementById('appDbPath').value = '';
 
   // Reset to the new app's default instance and re-render the selector from
   // cached data immediately (loadEnvConfig below refreshes it).
@@ -1617,17 +1629,18 @@ async function detectContainers() {
 // ── Connection test ───────────────────────────────────────────────────────────
 async function saveConnection() {
   const iid = currentInstanceId || currentApp;
-  const url    = document.getElementById('appUrl').value.trim();
-  const apikey = document.getElementById('apikey').value.trim();
-  if (!url && !apikey) {
-    logLine('WARN', 'Nothing to save — fill in URL and/or API Key first.', 'warn'); return;
+  const url     = document.getElementById('appUrl').value.trim();
+  const apikey  = document.getElementById('apikey').value.trim();
+  const db_path = document.getElementById('appDbPath').value.trim();
+  if (!url && !apikey && !db_path) {
+    logLine('WARN', 'Nothing to save — fill in URL, API Key, or Database path first.', 'warn'); return;
   }
   const btn = document.getElementById('saveConnBtn');
   btn.disabled = true; const oldHTML = btn.innerHTML; btn.textContent = 'Saving…';
   try {
     const res = await fetch(`/api/instances/${encodeURIComponent(iid)}/credentials`, {
       method: 'PUT', headers: authHeaders(),
-      body: JSON.stringify({ url, apikey }),
+      body: JSON.stringify({ url, apikey, db_path }),
     });
     if (res.status === 401) { handle401(); return; }
     if (!res.ok) {
@@ -1683,6 +1696,7 @@ async function startRepair() {
     instance_id: currentInstanceId || currentApp,
     url: document.getElementById('appUrl').value.trim(),
     apikey,
+    db_path: document.getElementById('appDbPath').value.trim(),
     ops: [...selectedOps],
     dry_run: document.getElementById('dryRunCheck').checked,
     skip_shutdown: document.getElementById('skipShutdownCheck').checked,

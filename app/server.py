@@ -309,6 +309,29 @@ def _docker_container(name):
 # ---------------------------------------------------------------------------
 # Repair steps
 # ---------------------------------------------------------------------------
+def _resolve_db_override(app_name: str, override: str | None) -> str:
+    """Turn a user-supplied db_path override into a full container path.
+
+    Accepts either an absolute path (used verbatim) or a bare filename /
+    relative path like "whisparr2.db" — the latter is resolved against the
+    app's config directory (the directory of the discovered DB when Docker
+    discovery ran, otherwise APPDATA_DIR/<app>). Empty override → "".
+
+    This is what lets forks/variants with a non-standard DB name — e.g.
+    hotio's Whisparr v2 using whisparr2.db instead of whisparr.db — be
+    pointed at the right file.
+    """
+    override = (override or "").strip()
+    if not override:
+        return ""
+    if os.path.isabs(override):
+        return override
+    disc = _discovered_for(app_name)
+    disc_db = disc.get("db_path") or ""
+    base = os.path.dirname(disc_db) if disc_db else str(app.config["APPDATA_DIR"] / app_name)
+    return os.path.join(base, override)
+
+
 def _step_preflight(cfg) -> str | None:
     """Returns resolved db path or None on failure."""
     emit("PHASE", "── Step 1/6  Preflight ──────────────────────────────────", "phase")
@@ -330,19 +353,22 @@ def _step_preflight(cfg) -> str | None:
     emit("INFO", f"App data dir: {app_data or '(unknown)'}", "info")
 
     # Resolve the DB path on Starr's side. Priority:
-    #   1. Explicit db_path from the request body (advanced override).
+    #   1. Explicit db_path override (absolute path, or a bare filename like
+    #      "whisparr2.db" resolved against the app's config dir).
     #   2. The discovered path that the auto-detect filled in for this app.
     #   3. Fallback: APPDATA_DIR/<app>/<dbname> if such a file exists.
     dbname = APP_DEFAULTS[cfg["app"]]["dbname"]
-    db_path = cfg.get("db_path") or ""
+    db_path = _resolve_db_override(cfg["app"], cfg.get("db_path"))
     if not db_path:
         fallback = app.config["APPDATA_DIR"] / cfg["app"] / dbname
         if fallback.exists():
             db_path = str(fallback)
             emit("INFO", f"Auto-detected DB path: {db_path}", "info")
     if not db_path or not Path(db_path).exists():
-        emit("ERR", "Could not locate this app's database file.", "err")
-        emit("ERR", "Mount your host appdata root at /appdata (or pass an explicit db_path).", "err")
+        emit("ERR", f"Could not locate this app's database file: {db_path or '(none)'}", "err")
+        emit("ERR", "Mount your host appdata root at /appdata. If this app uses a "
+                    "non-standard DB name (e.g. whisparr2.db), set it in the "
+                    "'Database path' field on the Connection panel.", "err")
         return None
 
     mb = Path(db_path).stat().st_size / 1_048_576
@@ -1435,13 +1461,23 @@ def api_backup_restore(name):
         return jsonify({"error": f"cannot infer a known app from '{name}'"}), 400
 
     cfg = {"app": app_name, "label": label, "backup_path": str(target)}
-    # For a named instance, use its stored connection + db path.
+    # For a named instance, use its stored connection + db path; for the
+    # default, pull any saved credentials-override db_path too.
     inst = _instances.get(label) if label != app_name else None
+    override_db = ""
     if inst:
-        for k in ("url", "apikey", "container_name", "db_path"):
+        for k in ("url", "apikey", "container_name"):
             if inst.get(k):
                 cfg[k] = inst[k]
-    if not cfg.get("db_path"):
+        override_db = inst.get("db_path") or ""
+    else:
+        override_db = _instances.get_override(app_name).get("db_path") or ""
+    # A db_path override (absolute or bare filename) wins if it resolves to a
+    # real file; otherwise fall back to discovery / APPDATA_DIR/<app>/<dbname>.
+    resolved = _resolve_db_override(app_name, override_db)
+    if resolved and Path(resolved).exists():
+        cfg["db_path"] = resolved
+    else:
         db_path = _resolve_db_path(app_name)
         if not db_path:
             return jsonify({"error": f"could not locate {app_name}'s database to restore into"}), 400
@@ -1525,6 +1561,7 @@ def _synthesized_defaults() -> list[dict]:
             "apikey":         apikey,
             "container_name": ov.get("container_name") or disc.get("container_name") or "",
             "db_path":        ov.get("db_path") or disc.get("db_path") or "",
+            "db_path_override": ov.get("db_path") or "",
             "default":        True,
             "discovered":     bool(disc),
             "configured":     bool(apikey),
@@ -1545,7 +1582,9 @@ def api_instances():
     actually be applied at prune time."""
     items = _synthesized_defaults()
     for s in _instances.all():
-        items.append({**s, "default": False, "configured": bool(s.get("apikey"))})
+        # For a named extra, its stored db_path IS the override (no discovery).
+        items.append({**s, "default": False, "configured": bool(s.get("apikey")),
+                      "db_path_override": s.get("db_path") or ""})
     env_default = app.config["MAX_BACKUP_AGE_DAYS"]
     per_inst = _settings.instance_retention_all()
     for it in items:

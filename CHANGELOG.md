@@ -5,6 +5,9 @@ Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/kripp
 
 ## [Unreleased]
 
+### Added
+- **Custom database name / path override** ([#62](https://github.com/Krippler/Starr/issues/62)) — a new **Database path** field on the Connection panel (and the add-instance form) lets you point Starr at a non-standard DB name, e.g. hotio's Whisparr v2 uses `whisparr2.db` instead of `whisparr.db`. Accepts a bare filename (resolved next to the auto-detected DB) or a full container path; persists per-instance via **Save Credentials** and is honoured by manual runs, scheduled runs, and restore. New `db_path_override` field on `/api/instances`.
+
 ### Changed
 - **Unraid Community Applications readiness** — the template (`templates/unraid.xml`) is now ready to submit to [CA](https://ca.unraid.net/):
   - Added a template **`<Icon>`** (`templates/starr-icon.png`, a 256×256 PNG) — CA rejects templates without one.
