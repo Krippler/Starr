@@ -3,7 +3,7 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
-## [Unreleased]
+## [1.2.3] — 2026-07-05
 
 ### Added
 - **Custom database name / path override** ([#62](https://github.com/Krippler/Starr/issues/62)) — a new **Database path** field on the Connection panel (and the add-instance form) lets you point Starr at a non-standard DB name, e.g. hotio's Whisparr v2 uses `whisparr2.db` instead of `whisparr.db`. Accepts a bare filename (resolved next to the auto-detected DB) or a full container path; persists per-instance via **Save Credentials** and is honoured by manual runs, scheduled runs, and restore. New `db_path_override` field on `/api/instances`.
