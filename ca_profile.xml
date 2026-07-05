@@ -11,5 +11,9 @@
     instances per app, run history, one-click restore, per-instance backup
     retention, and completion notifications. Images are built for linux/amd64,
     published to Docker Hub and GHCR, and signed with cosign.
+
+    Provided as-is, no warranty — reliable in our testing, but use at your own
+    risk and keep your own backups. The authors aren't responsible for any data
+    loss or database damage.
   </Profile>
 </Maintainer>

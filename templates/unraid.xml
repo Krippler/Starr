@@ -32,6 +32,10 @@
     host appdata root, Starr auto-discovers each *arr container — its URL,
     container name, and database path — so you only need to paste the API keys
     and click Save Credentials.
+
+    Provided as-is, no warranty — reliable in our testing, but use at your own
+    risk and keep your own backups. The authors aren't responsible for any data
+    loss or database damage.
   </Overview>
 
   <!-- ── Appearance / runtime ───────────────────────────────────────────── -->
