@@ -7,6 +7,7 @@ Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/kripp
 
 ### Changed
 - **Added an "as-is, no warranty / use at your own risk" disclaimer** to the top of the README, the Unraid template `<Overview>`, and `ca_profile.xml` — noting the tool has been reliable in testing but the authors accept no responsibility for data loss or database damage, and users should keep their own backups.
+- **Health-check probes no longer flood the access log** — the container's Docker HEALTHCHECK hits `GET /healthz` every 30s; a small `gunicorn.conf.py` log filter now drops `/healthz` and `/readyz` access-log lines while every real request is still logged (the health check itself is unchanged — this only affects logging).
 
 ## [1.2.4] — 2026-07-05
 

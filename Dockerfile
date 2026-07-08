@@ -73,8 +73,11 @@ ENV PORT=8877 \
 
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Launch with gunicorn (1 worker, threaded for SSE)
+# Launch with gunicorn (1 worker, threaded for SSE).
+# --config loads gunicorn.conf.py (in /app), whose only job is to filter the
+# container's own /healthz + /readyz probes out of the access log.
 CMD ["gunicorn", \
+     "--config", "gunicorn.conf.py", \
      "--bind", "0.0.0.0:8877", \
      "--workers", "1", \
      "--threads", "8", \
