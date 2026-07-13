@@ -285,12 +285,25 @@ def _docker_client():
     if not _HAVE_DOCKER_SDK:
         return None
     try:
-        client = _docker_sdk.from_env(timeout=10)
+        # 30s (not 10s) so a `docker stop` has HTTP headroom: docker-py sets a
+        # stop's read timeout to client_timeout + stop_grace, so 10+30=40s was
+        # too tight for a busy daemon to finish stopping a container. ping()
+        # still returns in well under a second when the daemon is healthy, so
+        # this doesn't slow the "no docker → fall back" path in practice.
+        client = _docker_sdk.from_env(timeout=30)
         client.ping()
         return client
     except Exception as e:
         log.debug("Docker client unavailable: %s", e)
         return None
+
+
+def _is_timeout_err(e: Exception) -> bool:
+    """True for read/connect-timeout style errors — the ones where a Docker
+    request reached the daemon but our HTTP client stopped waiting for the
+    reply. Matched by class name + message so we don't have to import the exact
+    requests/urllib3 exception types docker-py happens to surface."""
+    return "timeout" in type(e).__name__.lower() or "timed out" in str(e).lower()
 
 
 def _docker_container(name):
@@ -423,25 +436,44 @@ def _step_shutdown(cfg) -> bool:
             emit("WARN", f"Container '{container_name}' not reachable via docker.sock — falling back to app shutdown API.", "warn")
             emit("INFO", "Mount /var/run/docker.sock and put PUID's group in the docker group to enable container-managed shutdown.", "info")
         else:
-            emit("INFO", f"Stopping container '{container_name}' via Docker (timeout 30s)...", "info")
+            emit("INFO", f"Stopping container '{container_name}' via Docker (grace 30s)...", "info")
+            clean_stop = True
             try:
                 container.stop(timeout=30)
             except Exception as e:
-                emit("ERR", f"docker stop failed: {e}", "err")
-                return False
+                if _is_timeout_err(e):
+                    # A read-timeout does NOT mean the stop failed: the daemon
+                    # got the request and keeps stopping the container after our
+                    # HTTP client gives up. Don't bail — verify below whether it
+                    # actually went down (busy daemons can take a while).
+                    emit("WARN", f"docker stop didn't return in time ({e}); the daemon may still be "
+                                 "stopping it — verifying the container actually went down...", "warn")
+                    clean_stop = False
+                else:
+                    emit("ERR", f"docker stop failed: {e}", "err")
+                    return False
             cfg["_docker_managed"] = container_name
             # Confirm the app's API is actually gone — a stopped container's
-            # network endpoint should refuse connections immediately.
-            for _ in range(5):
+            # network endpoint refuses connections. If stop() returned cleanly
+            # the container is already down (short confirm); if it timed out we
+            # give a busy daemon up to ~60s to finish before deciding.
+            deadline = time.time() + (20 if clean_stop else 60)
+            while time.time() < deadline:
                 if _job.aborted:
                     emit("WARN", "Aborted during shutdown wait.", "warn"); return False
-                time.sleep(1)
                 if _get_status(host, port, apikey, urlbase, timeout=2, api=api) is None:
-                    emit("OK", f"Container '{container_name}' stopped. Waiting 2s for file handles to close...", "ok")
+                    emit("OK", f"Container '{container_name}' is down. Waiting 2s for file handles to close...", "ok")
                     time.sleep(2)
                     return True
-            emit("WARN", "Container reports stopped but app still responds — proceeding anyway.", "warn")
-            return True
+                time.sleep(2)
+            if clean_stop:
+                # Daemon said the stop succeeded; trust it even though the app
+                # endpoint is still answering (e.g. a proxy in front).
+                emit("WARN", "Container reports stopped but app still responds — proceeding anyway.", "warn")
+                return True
+            emit("ERR", f"Container '{container_name}' still responding after the stop timed out + 60s wait — "
+                        "aborting to protect the database.", "err")
+            return False
 
     emit("INFO", f"Sending shutdown to {cfg['app'].capitalize()}...", "info")
     _shutdown_app(host, port, apikey, urlbase, api=api)
