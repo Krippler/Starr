@@ -1615,3 +1615,51 @@ def test_apply_instance_carries_db_path_override(tmp_path):
     cfg2 = {"instance_id": "whisparr", "db_path": "custom.db"}
     srv._apply_instance(cfg2)
     assert cfg2["db_path"] == "custom.db"
+
+
+# ── Discovery re-scan on repair (stale container IP fix, issue-driven) ──────────
+def _disc(app, ip):
+    return {
+        "docker_available": True,
+        "apps": [{"app": app, "url": f"http://{ip}:7878", "published_port": 7878,
+                  "container_name": app, "db_path": f"/appdata/{app}/{app}.db"}],
+        "appdata": {}, "warnings": [],
+    }
+
+
+def test_repair_rescans_discovery_for_current_ip(monkeypatch):
+    """A repair must resolve the container's CURRENT bridge IP, not a stale
+    cached one — the fix for 'Cannot reach radarr at <old ip>' after a
+    container is recreated."""
+    srv._discovery_cache = _disc("radarr", "172.17.0.21")          # stale cache
+    monkeypatch.setattr(srv._discovery, "discover",
+                        lambda: _disc("radarr", "172.17.0.99"))     # fresh scan
+    # Host-perspective URL whose published port matches → resolver swaps to the
+    # discovered bridge URL, which must be the freshly-scanned IP.
+    cfg = {"app": "radarr", "url": "http://192.168.10.37:7878", "apikey": "k"}
+    out, err = srv._resolve_request_cfg(cfg)
+    assert err is None
+    assert out["host"] == "172.17.0.99"     # re-scanned, not the stale .21
+
+
+def test_no_rescan_when_docker_unavailable(monkeypatch):
+    srv._discovery_cache = {"docker_available": False, "apps": [],
+                            "appdata": {}, "warnings": []}
+    called = []
+    monkeypatch.setattr(srv._discovery, "discover",
+                        lambda: called.append(1) or {"docker_available": True, "apps": []})
+    cfg = {"app": "sonarr", "url": "http://sonarr:8989", "apikey": "k"}
+    out, err = srv._resolve_request_cfg(cfg)
+    assert err is None
+    assert called == []                     # no pointless scan without Docker
+    assert out["host"] == "sonarr"          # used the provided URL
+
+
+def test_refresh_discovery_keeps_cache_on_failure(monkeypatch):
+    good = _disc("sonarr", "172.17.0.5")
+    srv._discovery_cache = good
+    def boom():
+        raise RuntimeError("docker hiccup")
+    monkeypatch.setattr(srv._discovery, "discover", boom)
+    srv._refresh_discovery()
+    assert srv._discovery_cache == good     # transient failure didn't wipe it

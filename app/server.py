@@ -1045,6 +1045,8 @@ def _resolve_conn_lenient(cfg: dict) -> None:
     and used only for the offline re-check and online-after-restart wait."""
     app_name = cfg["app"]
     upper = app_name.upper()
+    if _discovery_cache.get("docker_available"):
+        _refresh_discovery()   # resolve the container's current bridge IP (see above)
     disc = _discovered_for(app_name)
     raw_url = (cfg.get("url") or "").strip() or app.config.get(f"{upper}_URL", "") or (disc.get("url") or "")
     if raw_url:
@@ -1097,9 +1099,20 @@ _discovery_cache: dict = {"apps": [], "appdata": {}, "warnings": [], "docker_ava
 
 
 def _refresh_discovery() -> dict:
-    """Rescan via Docker and update the in-memory cache. Safe to call often."""
+    """Rescan via Docker and update the in-memory cache. Safe to call often.
+
+    Resilient: if the rescan throws, or comes back unable to reach Docker when
+    we previously had results, keep the existing cache rather than clobbering
+    good data with an empty scan (a transient socket hiccup shouldn't wipe the
+    known container IPs)."""
     global _discovery_cache
-    _discovery_cache = _discovery.discover()
+    try:
+        fresh = _discovery.discover()
+    except Exception:
+        log.exception("Discovery rescan failed; keeping previous cache")
+        return _discovery_cache
+    if fresh.get("docker_available") or not (_discovery_cache.get("apps")):
+        _discovery_cache = fresh
     return _discovery_cache
 
 
@@ -1221,6 +1234,14 @@ def _resolve_request_cfg(cfg: dict) -> tuple[dict, str | None]:
     if app_name not in APP_DEFAULTS:
         return cfg, "app must be sonarr, radarr, lidarr, or sportarr"
     upper = app_name.upper()
+    # Re-scan Docker so we resolve the container's CURRENT bridge IP. Cached
+    # IPs go stale when a container is recreated (Docker reassigns the IP), and
+    # the cache is otherwise only refreshed at startup / on the Detect button —
+    # which is why a repair could keep hitting a dead address. Only rescan when
+    # Docker discovery is actually in use (skip the pointless scan + latency on
+    # non-socket setups, which resolve URLs from env / the request body).
+    if _discovery_cache.get("docker_available"):
+        _refresh_discovery()
     disc = _discovered_for(app_name)
     # URL: request body wins, else env, else discovery.
     raw_url = (cfg.get("url") or "").strip() \
