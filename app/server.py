@@ -345,12 +345,46 @@ def _resolve_db_override(app_name: str, override: str | None) -> str:
     return os.path.join(base, override)
 
 
+def _rescan_connection(cfg: dict) -> bool:
+    """Force a fresh Docker scan and re-resolve cfg's host/port/urlbase from it.
+
+    Self-heals a stale bridge IP: when a container is recreated Docker hands it
+    a new IP, and the discovery cache can lag (it's only refreshed at startup /
+    on Detect, and a rescan that momentarily can't reach the daemon keeps the
+    old data on purpose). That's why a scheduled run could keep hitting a dead
+    address until the user clicked Detect. Returns True only when the rescan
+    actually produced a DIFFERENT address (worth retrying); False otherwise —
+    no Docker discovery, an explicit url/env override in play (respect it), or
+    the address is unchanged (a retry would just fail again)."""
+    app_name = (cfg.get("app") or "").lower()
+    if not _discovery_cache.get("docker_available") or app_name not in APP_DEFAULTS:
+        return False
+    upper = app_name.upper()
+    if (cfg.get("url") or "").strip() or app.config.get(f"{upper}_URL", ""):
+        return False
+    before = (cfg.get("host"), cfg.get("port"))
+    _refresh_discovery()
+    raw_url = _discovered_for(app_name).get("url") or ""
+    if not raw_url:
+        return False
+    h, p, b = _split_url(raw_url, default_port=APP_DEFAULTS[app_name]["port"])
+    cfg["host"], cfg["port"], cfg["urlbase"] = h, p, b
+    return (h, p) != before
+
+
 def _step_preflight(cfg) -> str | None:
     """Returns resolved db path or None on failure."""
     emit("PHASE", "── Step 1/6  Preflight ──────────────────────────────────", "phase")
     host, port, apikey, urlbase = cfg["host"], cfg["port"], cfg["apikey"], cfg.get("urlbase", "")
     api = cfg.get("api", "v3")
     st = _get_status(host, port, apikey, urlbase, api=api)
+    if not st and _rescan_connection(cfg):
+        # First try missed — usually a stale Docker bridge IP after the
+        # container was recreated. We just re-scanned and the address changed,
+        # so retry once at the fresh IP before giving up.
+        host, port, urlbase = cfg["host"], cfg["port"], cfg.get("urlbase", "")
+        emit("INFO", f"Re-scanned Docker — retrying at {_base_url_from_parts(host, port, urlbase)}", "info")
+        st = _get_status(host, port, apikey, urlbase, api=api)
     if not st:
         emit("ERR", f"Cannot reach {cfg['app']} at {_base_url_from_parts(host, port, urlbase)}", "err")
         emit("ERR", "Check host / port / apikey settings.", "err")
