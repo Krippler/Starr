@@ -3,7 +3,7 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
-## [Unreleased]
+## [1.2.6] — 2026-07-13
 
 ### Fixed
 - **`docker stop` read-timeouts no longer abort a repair** — the Docker client used a 10s HTTP timeout, and docker-py sets a stop's read timeout to `client_timeout + stop_grace` (10 + 30 = 40s), so a slow/busy daemon that took longer than 40s to stop a container surfaced as `docker stop failed: … Read timed out` and killed the repair — even though the daemon *was* stopping the container. The client timeout is now 30s (→ 60s of stop headroom), and a stop read-timeout is treated as "maybe still stopping": Starr polls the app for up to 60s and proceeds once it's actually offline, only failing if it stays up. Genuine (non-timeout) stop errors still fail fast.
