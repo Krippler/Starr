@@ -1663,3 +1663,73 @@ def test_refresh_discovery_keeps_cache_on_failure(monkeypatch):
     monkeypatch.setattr(srv._discovery, "discover", boom)
     srv._refresh_discovery()
     assert srv._discovery_cache == good     # transient failure didn't wipe it
+
+
+# ── Robust docker stop (read-timeout tolerance) ────────────────────────────────
+def test_is_timeout_err():
+    import socket
+    assert srv._is_timeout_err(Exception("UnixHTTPConnectionPool(...): Read timed out. (read timeout=60)"))
+    assert srv._is_timeout_err(socket.timeout("timed out"))
+    assert srv._is_timeout_err(TimeoutError())
+    assert not srv._is_timeout_err(Exception("permission denied while connecting"))
+    assert not srv._is_timeout_err(ValueError("nope"))
+
+
+def test_docker_stop_timeout_but_container_goes_down(monkeypatch):
+    """The reported Sportarr case: docker stop read-times-out, but the daemon
+    still stops the container — shutdown must SUCCEED, not fail."""
+    srv._job.reset(); srv._job.start_time = 0
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+
+    class FakeContainer:
+        def stop(self, timeout=30):
+            raise Exception("UnixHTTPConnectionPool(host='localhost', port=None): "
+                            "Read timed out. (read timeout=60)")
+    monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)   # container went down
+
+    cfg = {"app": "sportarr", "host": "h", "port": 1, "apikey": "k",
+           "container_name": "Sportarr"}
+    assert srv._step_shutdown(cfg) is True
+    assert cfg.get("_docker_managed") == "Sportarr"
+
+
+def test_docker_stop_timeout_and_container_stays_up(monkeypatch):
+    """If the stop times out AND the app is still responding after the wait,
+    shutdown must fail (never repair a DB the app might have open)."""
+    srv._job.reset(); srv._job.start_time = 0
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+    clock = {"v": 0.0}
+    def fake_time():
+        clock["v"] += 5
+        return clock["v"]
+    monkeypatch.setattr(srv.time, "time", fake_time)
+
+    class FakeContainer:
+        def stop(self, timeout=30):
+            raise Exception("Read timed out. (read timeout=60)")
+    monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: {"version": "x"})  # still up
+
+    cfg = {"app": "sportarr", "host": "h", "port": 1, "apikey": "k",
+           "container_name": "Sportarr"}
+    assert srv._step_shutdown(cfg) is False
+
+
+def test_docker_stop_non_timeout_error_fails_fast(monkeypatch):
+    """A genuine (non-timeout) stop error still fails immediately, without the
+    long offline poll."""
+    srv._job.reset(); srv._job.start_time = 0
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+
+    class FakeContainer:
+        def stop(self, timeout=30):
+            raise Exception("permission denied while trying to connect to the Docker daemon")
+    monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+    polled = []
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: polled.append(1))
+
+    cfg = {"app": "sonarr", "host": "h", "port": 1, "apikey": "k",
+           "container_name": "sonarr"}
+    assert srv._step_shutdown(cfg) is False
+    assert polled == []   # no offline-poll on a hard failure

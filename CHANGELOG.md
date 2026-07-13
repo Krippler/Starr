@@ -6,6 +6,7 @@ Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/kripp
 ## [Unreleased]
 
 ### Fixed
+- **`docker stop` read-timeouts no longer abort a repair** — the Docker client used a 10s HTTP timeout, and docker-py sets a stop's read timeout to `client_timeout + stop_grace` (10 + 30 = 40s), so a slow/busy daemon that took longer than 40s to stop a container surfaced as `docker stop failed: … Read timed out` and killed the repair — even though the daemon *was* stopping the container. The client timeout is now 30s (→ 60s of stop headroom), and a stop read-timeout is treated as "maybe still stopping": Starr polls the app for up to 60s and proceeds once it's actually offline, only failing if it stays up. Genuine (non-timeout) stop errors still fail fast.
 - **Repairs now re-scan Docker for the container's current bridge IP** — the discovery cache (which holds each *arr's bridge IP) was only refreshed at startup and on the "Detect" button, so if a container was recreated (Docker reassigns its IP) a repair kept hitting the old address and failed with `Cannot reach <app> at http://<stale-ip>:<port>`. `_resolve_request_cfg` (manual + scheduled repairs) and `_resolve_conn_lenient` (restore) now rescan right before resolving the connection, so the current IP is always used. The rescan is gated on Docker actually being in use, is resilient to a transient scan failure (keeps the last-known-good cache), and adds no latency to non-socket setups.
 
 ## [1.2.5] — 2026-07-09
