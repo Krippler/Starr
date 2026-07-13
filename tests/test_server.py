@@ -1665,6 +1665,92 @@ def test_refresh_discovery_keeps_cache_on_failure(monkeypatch):
     assert srv._discovery_cache == good     # transient failure didn't wipe it
 
 
+# ── Preflight self-heals a stale bridge IP (rescan + retry) ────────────────────
+def test_rescan_connection_updates_host_on_new_ip(monkeypatch):
+    """A stale cached IP must be re-resolved to the container's current one."""
+    srv.app.config["RADARR_URL"] = ""
+    srv._discovery_cache = _disc("radarr", "172.17.0.21")           # stale
+    monkeypatch.setattr(srv._discovery, "discover",
+                        lambda: _disc("radarr", "172.17.0.99"))      # fresh
+    cfg = {"app": "radarr", "host": "172.17.0.21", "port": 7878, "urlbase": ""}
+    assert srv._rescan_connection(cfg) is True
+    assert cfg["host"] == "172.17.0.99"
+
+
+def test_rescan_connection_no_retry_when_ip_unchanged(monkeypatch):
+    """If the fresh scan yields the same address, don't signal a retry —
+    it would just fail again."""
+    srv.app.config["RADARR_URL"] = ""
+    srv._discovery_cache = _disc("radarr", "172.17.0.21")
+    monkeypatch.setattr(srv._discovery, "discover",
+                        lambda: _disc("radarr", "172.17.0.21"))      # same IP
+    cfg = {"app": "radarr", "host": "172.17.0.21", "port": 7878, "urlbase": ""}
+    assert srv._rescan_connection(cfg) is False
+
+
+def test_rescan_connection_respects_explicit_url(monkeypatch):
+    """An explicit url override is user intent — never override it via rescan."""
+    srv._discovery_cache = _disc("radarr", "172.17.0.21")
+    called = []
+    monkeypatch.setattr(srv._discovery, "discover",
+                        lambda: called.append(1) or _disc("radarr", "172.17.0.99"))
+    cfg = {"app": "radarr", "url": "http://192.168.1.5:7878",
+           "host": "192.168.1.5", "port": 7878, "urlbase": ""}
+    assert srv._rescan_connection(cfg) is False
+    assert called == []                         # no scan when url is pinned
+
+
+def test_rescan_connection_skipped_without_docker(monkeypatch):
+    srv._discovery_cache = {"docker_available": False, "apps": [],
+                            "appdata": {}, "warnings": []}
+    called = []
+    monkeypatch.setattr(srv._discovery, "discover", lambda: called.append(1) or {})
+    cfg = {"app": "radarr", "host": "172.17.0.21", "port": 7878, "urlbase": ""}
+    assert srv._rescan_connection(cfg) is False
+    assert called == []
+
+
+def test_preflight_retries_after_rescan(monkeypatch, tmp_path):
+    """The reported bug: a scheduled repair hits a stale IP and fails, but works
+    after a Detect. Preflight must self-heal — rescan and retry at the fresh IP
+    without any manual step."""
+    srv.app.config["APPDATA_DIR"] = tmp_path / "data"
+    srv.app.config["RADARR_URL"] = ""
+    dbdir = tmp_path / "data" / "radarr"
+    dbdir.mkdir(parents=True)
+    (dbdir / "radarr.db").write_bytes(b"x" * 2048)
+    srv._discovery_cache = _disc("radarr", "172.17.0.21")           # stale
+    monkeypatch.setattr(srv._discovery, "discover",
+                        lambda: _disc("radarr", "172.17.0.99"))      # fresh
+    calls = []
+    def fake_status(host, *a, **k):
+        calls.append(host)
+        return {"version": "6.0", "osName": "linux"} if host == "172.17.0.99" else None
+    monkeypatch.setattr(srv, "_get_status", fake_status)
+    srv._job.reset()
+    cfg = {"app": "radarr", "host": "172.17.0.21", "port": 7878, "apikey": "k",
+           "urlbase": "", "api": "v3"}
+    resolved = srv._step_preflight(cfg)
+    assert resolved == str(dbdir / "radarr.db")   # got past preflight on retry
+    assert calls == ["172.17.0.21", "172.17.0.99"]  # failed stale, then fresh
+    assert cfg["host"] == "172.17.0.99"
+
+
+def test_preflight_no_retry_when_docker_unavailable(monkeypatch):
+    """Without Docker discovery there's nothing to rescan — fail on first miss,
+    exactly once (no wasted second probe)."""
+    srv._discovery_cache = {"docker_available": False, "apps": [],
+                            "appdata": {}, "warnings": []}
+    calls = []
+    monkeypatch.setattr(srv, "_get_status",
+                        lambda host, *a, **k: calls.append(host) or None)
+    srv._job.reset()
+    cfg = {"app": "radarr", "host": "1.2.3.4", "port": 7878, "apikey": "k",
+           "urlbase": "", "api": "v3"}
+    assert srv._step_preflight(cfg) is None
+    assert calls == ["1.2.3.4"]                 # single probe, no retry
+
+
 # ── Robust docker stop (read-timeout tolerance) ────────────────────────────────
 def test_is_timeout_err():
     import socket

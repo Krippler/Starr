@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.2.8] — 2026-07-13
+
+### Fixed
+- **Scheduled repairs now self-heal a stale container IP instead of failing until you click "Detect"** — a scheduled run resolves the *arr's address from the Docker discovery cache, and if the container had been recreated (Docker reassigns its bridge IP) the run could fail preflight with `Cannot reach <app> at http://<stale-ip>:<port>`; it only started working again after visiting the app page / hitting **Detect** forced a fresh scan. Preflight now detects a first-try connection miss, forces a fresh Docker scan, re-resolves the address, and retries once at the current IP — no manual step. Respects explicit `url` / `*_URL` overrides (never rescans over a pinned address) and only retries when the re-scanned address actually changed. Discovery's own Docker client timeout was also raised from 10s to 30s (matching the repair client) so a busy daemon doesn't falsely report Docker as unavailable and strand the cache on a stale IP.
+
 ## [1.2.7] — 2026-07-13
 
 Supersedes 1.2.6. An earlier `v1.2.6` tag was created from an incomplete

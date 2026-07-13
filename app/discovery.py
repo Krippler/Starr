@@ -58,7 +58,10 @@ def _docker_client():
     except ImportError:
         return None
     try:
-        client = docker.from_env(timeout=10)
+        # 30s (matching server._docker_client) so a busy daemon doesn't time
+        # out the ping and make us report Docker as unavailable — a false
+        # "unavailable" leaves the discovery cache holding stale container IPs.
+        client = docker.from_env(timeout=30)
         client.ping()
         return client
     except Exception as e:
