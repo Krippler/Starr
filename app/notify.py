@@ -27,6 +27,7 @@ Notify levels (lowest → highest verbosity):
 
 import json
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any
@@ -172,6 +173,34 @@ class NotifyConfig:
 
 
 # ── Senders ───────────────────────────────────────────────────────────────────
+# Apprise's notify() takes no timeout and many of its plugins fall back to
+# requests with timeout=None, so a black-holed target would block forever.
+# Since notifications run inline on the repair worker's finally block, an
+# unbounded send would wedge that thread (and its fd) permanently. Cap it.
+APPRISE_TIMEOUT = int(os.environ.get("APPRISE_TIMEOUT_SECONDS", "30"))
+
+
+def _run_bounded(fn, timeout: float) -> tuple[Any, bool]:
+    """Run fn() on a daemon thread and wait up to `timeout` seconds.
+    Returns (result_or_None, timed_out). On timeout we stop waiting and let
+    the worker proceed — the orphaned daemon thread can't block process exit
+    and is reaped when its own socket timeout finally fires."""
+    box: dict[str, Any] = {}
+    def _target():
+        try:
+            box["result"] = fn()
+        except BaseException as e:   # noqa: BLE001 — never let it escape the thread
+            box["error"] = e
+    t = threading.Thread(target=_target, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return None, True
+    if "error" in box:
+        raise box["error"]
+    return box.get("result"), False
+
+
 def _send_apprise(urls: list[str], title: str, body: str) -> tuple[int, list[str]]:
     """Returns (count_sent, errors)."""
     if not urls:
@@ -188,8 +217,16 @@ def _send_apprise(urls: list[str], title: str, body: str) -> tuple[int, list[str
             added += 1
         else:
             errors.append(f"invalid apprise url: {u.split('://',1)[0]}://…")
-    if added and not ap.notify(title=title, body=body):
-        errors.append("apprise notify failed for one or more targets")
+    if added:
+        try:
+            ok, timed_out = _run_bounded(lambda: ap.notify(title=title, body=body), APPRISE_TIMEOUT)
+        except BaseException as e:   # noqa: BLE001 — a plugin blew up; report, don't crash
+            ok, timed_out = False, False
+            errors.append(f"apprise notify error: {e}")
+        if timed_out:
+            errors.append(f"apprise notify timed out after {APPRISE_TIMEOUT}s")
+        elif not ok:
+            errors.append("apprise notify failed for one or more targets")
     return added, errors
 
 

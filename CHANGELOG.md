@@ -3,6 +3,14 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [Unreleased]
+
+### Fixed
+- **Docker client socket/fd leak** — every Docker operation (`docker stop`/`start` around a repair, and each auto-discovery scan) opened a docker-py client but never closed it, leaking a `requests` session + a socket to `/var/run/docker.sock` each time. Discovery now runs on every scheduled-repair preflight, so on a long-lived container these accumulated until the process could hit its open-file limit. All clients are now closed after use (repair shutdown/restart, `discover()`, `_self_appdata_root()`, and the container-lookup failure path).
+- **Leaked SQLite connection on an unexpected repair error** — `_step_repair` only closed its connection on the normal path; a non-`sqlite3` error escaping the op loop (e.g. an `OSError` while stat-ing the file during VACUUM) abandoned an open connection still holding a WAL/exclusive lock on the app's live database. Connection cleanup (rollback + close + clearing `active_conn`) now runs in a `finally`.
+- **Notifications could hang the repair worker forever** — Apprise's `notify()` takes no timeout and many of its plugins fall back to `requests` with no timeout, so a black-holed target would block the worker thread (and its fd) indefinitely, since notifications run inline at the end of every run. Apprise sends are now bounded by a watchdog (`APPRISE_TIMEOUT_SECONDS`, default 30s); a timeout is reported as an error and the worker proceeds. Signal and webhook sends already had timeouts.
+- **Stale credential overrides on instance delete** — deleting a named instance left its saved apikey/url/db_path override on disk, growing the overrides file over add/delete cycles and keeping stale credentials around. `delete()` now removes the matching override.
+
 ## [1.2.9] — 2026-07-13
 
 Supersedes 1.2.8. The `v1.2.8` tag was cut from `main` moments before this

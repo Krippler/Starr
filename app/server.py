@@ -306,9 +306,24 @@ def _is_timeout_err(e: Exception) -> bool:
     return "timeout" in type(e).__name__.lower() or "timed out" in str(e).lower()
 
 
+def _close_docker_client(client) -> None:
+    """Best-effort close of a docker-py client. Each client owns a requests
+    Session + a pooled socket to /var/run/docker.sock; abandoning it (rather
+    than closing) leaks that fd until gc, which — with discovery running on
+    every scheduled-repair preflight — accrues into an fd/socket leak over a
+    long-lived container. Callers close the client when they're done with it."""
+    if client is None:
+        return
+    try:
+        client.close()
+    except Exception:
+        pass
+
+
 def _docker_container(name):
     """Look up a container by name. Returns (client, container) or (None, None)
-    if the daemon or container is unreachable."""
+    if the daemon or container is unreachable. On success the CALLER owns the
+    client and must _close_docker_client() it when finished."""
     client = _docker_client()
     if not client:
         return None, None
@@ -316,6 +331,7 @@ def _docker_container(name):
         return client, client.containers.get(name)
     except Exception as e:
         log.debug("Container %s not found: %s", name, e)
+        _close_docker_client(client)   # don't leak the client we just opened
         return None, None
 
 
@@ -485,7 +501,11 @@ def _step_shutdown(cfg) -> bool:
                     clean_stop = False
                 else:
                     emit("ERR", f"docker stop failed: {e}", "err")
+                    _close_docker_client(client)
                     return False
+            # Done issuing the stop — the offline-confirmation below polls the
+            # app over HTTP, not Docker, so release the client now.
+            _close_docker_client(client)
             cfg["_docker_managed"] = container_name
             # Confirm the app's API is actually gone — a stopped container's
             # network endpoint refuses connections. If stop() returned cleanly
@@ -658,90 +678,94 @@ def _step_repair(cfg, db_path: str) -> dict:
 
     # Publish the connection so api_stop can interrupt() a long op mid-flight.
     _job.active_conn = con
-    # An interrupt may have arrived between shutdown and opening the DB.
-    if _job.aborted:
-        con.interrupt()
-
-    for op in ops:
-        if _job.aborted:
-            emit("WARN", "Repair aborted by user.", "warn"); break
-        emit("INFO", f"Running {op.upper():<22}  {OP_DESC.get(op,'')}", "info")
-        try:
-            if op == "integrity":
-                rows = con.execute("PRAGMA integrity_check").fetchall()
-                if rows and rows[0][0] == "ok":
-                    emit("OK", "integrity_check: ok – no corruption detected.", "ok")
-                    results[op] = ("ok", 0)
-                else:
-                    issues = [r[0] for r in rows]
-                    emit("WARN", f"{len(issues)} issue(s) found:", "warn")
-                    for i in issues[:8]: emit("WARN", f"  • {i}", "warn")
-                    if len(issues) > 8: emit("WARN", f"  … and {len(issues)-8} more", "warn")
-                    results[op] = ("issues", len(issues))
-
-            elif op == "foreign_keys":
-                rows = con.execute("PRAGMA foreign_key_check").fetchall()
-                if not rows:
-                    emit("OK", "No FK violations found.", "ok"); results[op] = ("ok", 0)
-                else:
-                    emit("WARN", f"{len(rows)} violation(s) found – repairing...", "warn")
-                    con.execute("PRAGMA foreign_keys = OFF")
-                    fixed = 0
-                    for tbl, rowid, parent, fkid in rows:
-                        try:
-                            con.execute(f"DELETE FROM [{tbl}] WHERE rowid=?", (rowid,))
-                            emit("INFO", f"  Removed orphan: {tbl}.rowid={rowid} (parent={parent})", "info")
-                            fixed += 1
-                        except sqlite3.Error as de:
-                            emit("WARN", f"  Could not remove {tbl}.rowid={rowid}: {de}", "warn")
-                    con.execute("PRAGMA foreign_keys = ON"); con.commit()
-                    emit("OK", f"Repaired {fixed}/{len(rows)} FK violations.", "ok")
-                    results[op] = ("fixed", fixed)
-
-            elif op == "wal_checkpoint":
-                row = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
-                emit("OK", f"WAL checkpoint – log: {row[1]} frames, checkpointed: {row[2]}", "ok")
-                results[op] = ("ok", row[2])
-
-            elif op == "vacuum":
-                before = Path(db_path).stat().st_size / 1_048_576
-                emit("INFO", f"Pre-VACUUM: {before:.1f} MB", "info")
-                con.execute("VACUUM"); con.commit()
-                after = Path(db_path).stat().st_size / 1_048_576
-                emit("OK", f"VACUUM done: {before:.1f} MB → {after:.1f} MB  (reclaimed {before-after:.1f} MB)", "ok")
-                results[op] = ("ok", before - after)
-
-            elif op == "reindex":
-                con.execute("REINDEX"); con.commit()
-                emit("OK", "REINDEX complete – all indexes rebuilt.", "ok")
-                results[op] = ("ok", 0)
-
-            elif op == "analyze":
-                con.execute("ANALYZE"); con.commit()
-                emit("OK", "ANALYZE complete – query-planner stats updated.", "ok")
-                results[op] = ("ok", 0)
-
-            else:
-                emit("WARN", f"Unknown op '{op}' – skipped.", "warn")
-                results[op] = ("skipped", 0)
-
-        except sqlite3.Error as e:
-            # interrupt() surfaces here as OperationalError("interrupted").
-            # Treat any error during an abort as a clean cancellation, not a
-            # repair failure.
-            if _job.aborted:
-                emit("WARN", f"{op.upper()} interrupted by user.", "warn")
-                results[op] = ("aborted", 0)
-                break
-            emit("ERR", f"{op} failed: {e}", "err")
-            results[op] = ("error", str(e))
-
-    _job.active_conn = None
     try:
-        con.rollback()   # undo any partial work from an interrupted statement
-    except sqlite3.Error:
-        pass
-    con.close()
+        # An interrupt may have arrived between shutdown and opening the DB.
+        if _job.aborted:
+            con.interrupt()
+
+        for op in ops:
+            if _job.aborted:
+                emit("WARN", "Repair aborted by user.", "warn"); break
+            emit("INFO", f"Running {op.upper():<22}  {OP_DESC.get(op,'')}", "info")
+            try:
+                if op == "integrity":
+                    rows = con.execute("PRAGMA integrity_check").fetchall()
+                    if rows and rows[0][0] == "ok":
+                        emit("OK", "integrity_check: ok – no corruption detected.", "ok")
+                        results[op] = ("ok", 0)
+                    else:
+                        issues = [r[0] for r in rows]
+                        emit("WARN", f"{len(issues)} issue(s) found:", "warn")
+                        for i in issues[:8]: emit("WARN", f"  • {i}", "warn")
+                        if len(issues) > 8: emit("WARN", f"  … and {len(issues)-8} more", "warn")
+                        results[op] = ("issues", len(issues))
+
+                elif op == "foreign_keys":
+                    rows = con.execute("PRAGMA foreign_key_check").fetchall()
+                    if not rows:
+                        emit("OK", "No FK violations found.", "ok"); results[op] = ("ok", 0)
+                    else:
+                        emit("WARN", f"{len(rows)} violation(s) found – repairing...", "warn")
+                        con.execute("PRAGMA foreign_keys = OFF")
+                        fixed = 0
+                        for tbl, rowid, parent, fkid in rows:
+                            try:
+                                con.execute(f"DELETE FROM [{tbl}] WHERE rowid=?", (rowid,))
+                                emit("INFO", f"  Removed orphan: {tbl}.rowid={rowid} (parent={parent})", "info")
+                                fixed += 1
+                            except sqlite3.Error as de:
+                                emit("WARN", f"  Could not remove {tbl}.rowid={rowid}: {de}", "warn")
+                        con.execute("PRAGMA foreign_keys = ON"); con.commit()
+                        emit("OK", f"Repaired {fixed}/{len(rows)} FK violations.", "ok")
+                        results[op] = ("fixed", fixed)
+
+                elif op == "wal_checkpoint":
+                    row = con.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+                    emit("OK", f"WAL checkpoint – log: {row[1]} frames, checkpointed: {row[2]}", "ok")
+                    results[op] = ("ok", row[2])
+
+                elif op == "vacuum":
+                    before = Path(db_path).stat().st_size / 1_048_576
+                    emit("INFO", f"Pre-VACUUM: {before:.1f} MB", "info")
+                    con.execute("VACUUM"); con.commit()
+                    after = Path(db_path).stat().st_size / 1_048_576
+                    emit("OK", f"VACUUM done: {before:.1f} MB → {after:.1f} MB  (reclaimed {before-after:.1f} MB)", "ok")
+                    results[op] = ("ok", before - after)
+
+                elif op == "reindex":
+                    con.execute("REINDEX"); con.commit()
+                    emit("OK", "REINDEX complete – all indexes rebuilt.", "ok")
+                    results[op] = ("ok", 0)
+
+                elif op == "analyze":
+                    con.execute("ANALYZE"); con.commit()
+                    emit("OK", "ANALYZE complete – query-planner stats updated.", "ok")
+                    results[op] = ("ok", 0)
+
+                else:
+                    emit("WARN", f"Unknown op '{op}' – skipped.", "warn")
+                    results[op] = ("skipped", 0)
+
+            except sqlite3.Error as e:
+                # interrupt() surfaces here as OperationalError("interrupted").
+                # Treat any error during an abort as a clean cancellation, not a
+                # repair failure.
+                if _job.aborted:
+                    emit("WARN", f"{op.upper()} interrupted by user.", "warn")
+                    results[op] = ("aborted", 0)
+                    break
+                emit("ERR", f"{op} failed: {e}", "err")
+                results[op] = ("error", str(e))
+    finally:
+        # Always release the connection — even if an unexpected (non-sqlite)
+        # error escapes the loop — so we never leak an open handle holding a
+        # WAL/exclusive lock on the app's live database.
+        _job.active_conn = None
+        try:
+            con.rollback()   # undo any partial work from an interrupted statement
+        except sqlite3.Error:
+            pass
+        con.close()
     return results
 
 
@@ -796,7 +820,7 @@ def _step_restart(cfg, results) -> None:
     # exit state, so unless-stopped won't auto-start it.
     docker_managed = cfg.get("_docker_managed")
     if docker_managed:
-        _, container = _docker_container(docker_managed)
+        client, container = _docker_container(docker_managed)
         if container is None:
             emit("ERR", f"Cannot reach container '{docker_managed}' to start it.", "err")
             emit("SYS", f"  docker start {docker_managed}", "sys")
@@ -808,6 +832,8 @@ def _step_restart(cfg, results) -> None:
             except Exception as e:
                 emit("ERR", f"docker start failed: {e}", "err")
                 emit("SYS", f"  docker start {docker_managed}", "sys")
+            finally:
+                _close_docker_client(client)
 
     emit("INFO", f"Waiting for {cfg['app'].capitalize()} to come back online...", "info")
     if not docker_managed:

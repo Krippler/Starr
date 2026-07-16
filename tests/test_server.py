@@ -1751,6 +1751,86 @@ def test_preflight_no_retry_when_docker_unavailable(monkeypatch):
     assert calls == ["1.2.3.4"]                 # single probe, no retry
 
 
+# ── Resource-leak fixes: docker clients + sqlite connections ───────────────────
+def test_docker_container_closes_client_on_lookup_failure(monkeypatch):
+    """_docker_container must close the client it opened when the container
+    lookup fails — otherwise every miss leaks a socket to the docker daemon."""
+    closed = {"v": False}
+    class _Containers:
+        def get(self, name):
+            raise RuntimeError("no such container")
+    class _Client:
+        def __init__(self):
+            self.containers = _Containers()
+        def close(self):
+            closed["v"] = True
+    monkeypatch.setattr(srv, "_docker_client", lambda: _Client())
+    client, container = srv._docker_container("radarr")
+    assert client is None and container is None
+    assert closed["v"] is True          # client was closed, not leaked
+
+
+def test_step_repair_closes_conn_on_unexpected_error(monkeypatch, tmp_path):
+    """A non-sqlite error escaping the op loop must still close the DB
+    connection and clear active_conn — never leak an open handle holding a
+    WAL/exclusive lock on the app's live database."""
+    db = tmp_path / "x.db"
+    c = sqlite3.connect(db); c.execute("CREATE TABLE t(id INTEGER)"); c.commit(); c.close()
+
+    made = []
+    real_connect = sqlite3.connect
+    class _SpyConn(sqlite3.Connection):
+        def close(self):
+            self._closed = True
+            super().close()
+    def _spy_connect(*a, **k):
+        k["factory"] = _SpyConn
+        con = real_connect(*a, **k); con._closed = False; made.append(con); return con
+    monkeypatch.setattr(srv.sqlite3, "connect", _spy_connect)
+
+    real_emit = srv.emit
+    def _boom_emit(tag, msg, cls=""):
+        if msg.startswith("Running"):
+            raise RuntimeError("kaboom")     # non-sqlite error mid-op
+        return real_emit(tag, msg, cls)
+    monkeypatch.setattr(srv, "emit", _boom_emit)
+
+    srv._job.reset()
+    cfg = {"ops": ["integrity"], "app": "radarr"}
+    with pytest.raises(RuntimeError):
+        srv._step_repair(cfg, str(db))
+    assert made and made[0]._closed is True   # connection closed by finally
+    assert srv._job.active_conn is None        # active_conn cleared by finally
+
+
+def test_run_bounded_times_out_without_blocking():
+    """Apprise sends are wrapped in _run_bounded so a hung target can't wedge
+    the worker thread forever."""
+    import time as _t
+    res, timed_out = srv._notify._run_bounded(lambda: _t.sleep(5) or True, 0.1)
+    assert timed_out is True and res is None
+
+
+def test_run_bounded_returns_and_propagates():
+    got, timed_out = srv._notify._run_bounded(lambda: "done", 5)
+    assert got == "done" and timed_out is False
+    def _raise():
+        raise ValueError("plugin boom")
+    with pytest.raises(ValueError):
+        srv._notify._run_bounded(_raise, 5)
+
+
+def test_instance_delete_removes_override(tmp_path):
+    from instances import InstanceStore
+    store = InstanceStore(tmp_path / "i.json", srv.APP_DEFAULTS.keys())
+    inst = store.add({"app": "radarr", "name": "second", "url": "http://x:7878", "apikey": "k"})
+    iid = inst["id"]
+    store.set_override(iid, {"apikey": "secret"})
+    assert store.get_override(iid).get("apikey") == "secret"
+    assert store.delete(iid) is True
+    assert store.get_override(iid) == {}       # override dropped, no stale creds
+
+
 # ── Robust docker stop (read-timeout tolerance) ────────────────────────────────
 def test_is_timeout_err():
     import socket
