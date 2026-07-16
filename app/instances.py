@@ -147,6 +147,12 @@ class InstanceStore:
             self._items = [s for s in self._items if s["id"] != iid]
             if len(self._items) != n:
                 self.save()
+                # Drop any saved credential override for this instance too —
+                # otherwise stale apikey/url/db_path entries (and the on-disk
+                # credentials) linger forever and the overrides file grows with
+                # every add/delete cycle.
+                if self._overrides.pop((iid or "").lower(), None) is not None:
+                    self._save_overrides()
                 return True
         return False
 

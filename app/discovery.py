@@ -69,6 +69,18 @@ def _docker_client():
         return None
 
 
+def _close_docker_client(client) -> None:
+    """Best-effort close. Each client holds a requests Session + a socket to
+    the Docker daemon; discover() runs often (startup, Detect, and on every
+    scheduled-repair preflight), so not closing leaks fds over time."""
+    if client is None:
+        return
+    try:
+        client.close()
+    except Exception:
+        pass
+
+
 def _classify(container) -> str | None:
     """Return the canonical app name (sonarr/radarr/…) this container is, or
     None if it doesn't look like an *arr."""
@@ -152,13 +164,15 @@ def _self_appdata_root() -> tuple[str | None, str]:
     try:
         my_id = socket.gethostname()
         me = client.containers.get(my_id)
+        for m in me.attrs.get("Mounts", []) or []:
+            if m.get("Destination") == container_root:
+                return m.get("Source"), container_root
+        return None, container_root
     except Exception as e:
         log.debug("Could not look up own container (hostname=%s): %s", socket.gethostname(), e)
         return None, container_root
-    for m in me.attrs.get("Mounts", []) or []:
-        if m.get("Destination") == container_root:
-            return m.get("Source"), container_root
-    return None, container_root
+    finally:
+        _close_docker_client(client)
 
 
 def _translate_host_to_internal(host_path: str | None,
@@ -192,6 +206,13 @@ def discover() -> dict[str, Any]:
     if not client:
         result["warnings"].append("Docker daemon not reachable — auto-discovery skipped.")
         return result
+    try:
+        return _discover_with(client, result)
+    finally:
+        _close_docker_client(client)
+
+
+def _discover_with(client, result: dict[str, Any]) -> dict[str, Any]:
     result["docker_available"] = True
 
     host_root, container_root = _self_appdata_root()
