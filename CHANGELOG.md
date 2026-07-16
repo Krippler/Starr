@@ -3,7 +3,7 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
-## [Unreleased]
+## [1.2.10] — 2026-07-16
 
 ### Fixed
 - **Docker client socket/fd leak** — every Docker operation (`docker stop`/`start` around a repair, and each auto-discovery scan) opened a docker-py client but never closed it, leaking a `requests` session + a socket to `/var/run/docker.sock` each time. Discovery now runs on every scheduled-repair preflight, so on a long-lived container these accumulated until the process could hit its open-file limit. All clients are now closed after use (repair shutdown/restart, `discover()`, `_self_appdata_root()`, and the container-lookup failure path).
