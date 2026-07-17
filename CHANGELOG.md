@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.3.4] — 2026-07-17
+
+### Fixed
+- **Couldn't drag a card into a shorter column** — dashboard columns were only as tall as their content, so the empty space beneath a short column (e.g. one with a single card) wasn't part of any column and rejected drops. With two columns of very different heights this made cards from the tall column impossible to move into the short one. Columns now stretch to the full dashboard height, so their entire width is a valid drop target. The while-dragging "＋" drop-rail for creating a new column was also widened (48→60px) for easier targeting.
+
 ## [1.3.3] — 2026-07-17
 
 ### Added

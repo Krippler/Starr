@@ -125,7 +125,12 @@ header {
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 14px; overflow: hidden; }
 
 /* ── Rearrangeable dashboard (drag cards between responsive columns) ─────────── */
-.dashboard { display: flex; align-items: flex-start; gap: 14px; }
+/* align-items: stretch (not flex-start) so every column spans the full dashboard
+   height. Otherwise a short column (e.g. one card) is only as tall as its content
+   and the empty space beneath it isn't part of any column — so you can't drop a
+   card into the lower area of a short column, which made cards impossible to move
+   into a shorter neighbour. */
+.dashboard { display: flex; align-items: stretch; gap: 14px; }
 .dash-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
 /* If you drag every card out of a column, don't leave its share of the width as
    dead space — collapse the empty column so the populated ones expand to fill
@@ -138,7 +143,7 @@ header {
    collapses it back. The rail stretches full height so it's an easy drop target. */
 .dashboard.dnd-active .dash-col:empty {
   display: flex; align-items: center; justify-content: center;
-  flex: 0 0 48px; min-width: 48px; align-self: stretch; min-height: 60px;
+  flex: 0 0 60px; min-width: 60px; align-self: stretch; min-height: 60px;
   outline: 2px dashed var(--border); outline-offset: -3px; border-radius: var(--radius);
   background: rgba(255,255,255,.02);
 }
@@ -462,7 +467,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       </div>
       <div>
         <h1 id="appTitle">STARR DB REPAIR</h1>
-        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.3</p>
+        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.4</p>
       </div>
     </div>
     <div class="header-right">
@@ -1657,7 +1662,7 @@ function switchApp(app) {
 
   // Header text
   document.getElementById('appTitle').textContent = cfg.name + ' DB REPAIR';
-  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.3';
+  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.4';
   document.getElementById('logoSvg').innerHTML    = cfg.icon;
   document.getElementById('termTitle').textContent = cfg.name + ' REPAIR LOG';
 
