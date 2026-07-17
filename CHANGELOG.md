@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.3.6] — 2026-07-17
+
+### Fixed
+- **The rightmost dashboard column still couldn't be dragged** — cards in the right column of a two-column layout couldn't be moved to create a third column or into the first column (only after seeding a third column from the left did the middle column become movable). Root cause: native HTML5 drag-and-drop — adding the ＋ rail on dragstart reflowed the columns and the browser's drag hit-testing broke dragging out of the rightmost column. Rearranging is now driven by **pointer events with a floating clone** and purely coordinate-based routing, so every column behaves identically. Verified by driving a real mouse in a headless browser (right-column → new third column, right-column → first column, and in-column reorder all work).
+
 ## [1.3.5] — 2026-07-17
 
 ### Fixed
