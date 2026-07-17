@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.3.5] — 2026-07-17
+
+### Fixed
+- **Dragging a card into an adjacent column or the new-column rail was unreliable** — the drag used a per-column dragover handler, so you had to land the cursor precisely inside a thin column/rail and the flex gaps between columns were dead zones. In a two-column layout, a card from the right column often couldn't be dropped into the far-right "＋" rail to create a third column. Drag routing now uses a single dashboard-level handler that tiles the full width into column bands (a column owns everything up to its right edge; the rightmost owns everything beyond), so the whole dashboard is a reliable drop surface with no dead gaps.
+
 ## [1.3.4] — 2026-07-17
 
 ### Fixed
