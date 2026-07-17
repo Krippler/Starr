@@ -3,7 +3,7 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
-## [Unreleased]
+## [1.3.0] — 2026-07-16
 
 ### Added
 - **Rearrangeable dashboard** — the main panels (Connection, Repair Log, Operations, Trends, Backups, Schedules, Notifications) are now drag-to-rearrange cards. Hover a panel header to reveal a grip handle and drag it to reorder or move it between columns. On wide screens the panels flow into 2–3 responsive columns (single column on narrow/mobile, identical to before); each width remembers its own arrangement, saved per-browser in `localStorage` (same mechanism as the existing panel collapse-state). A **Reset layout** button restores the default. The live run status (shutdown warning, progress bar, result tiles) stays in a fixed strip above the grid so it never moves mid-repair. Purely a frontend enhancement — no API or backend changes.

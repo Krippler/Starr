@@ -879,7 +879,7 @@ def _repair_worker(cfg: dict) -> None:
     _job.history    = []
     _job.result     = None
 
-    emit("SYS", f"Starr DB Repair v1.2.10 – job started for {cfg['app'].upper()}", "sys")
+    emit("SYS", f"Starr DB Repair v1.3.0 – job started for {cfg['app'].upper()}", "sys")
     emit("SYS", f"Dry run: {cfg.get('dry_run', False)}", "sys")
 
     db_path = None
