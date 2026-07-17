@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.3.2] — 2026-07-17
+
+### Fixed
+- **Empty dashboard columns left dead space** — after dragging every card out of a column (e.g. consolidating a 3-column layout down to 2), the now-empty column still reserved its share of the width, leaving a blank gap on wide screens. Empty columns now collapse so the populated columns expand to fill the page. (Reset layout restores the default multi-column spread.)
+
 ## [1.3.1] — 2026-07-17
 
 ### Fixed

@@ -127,6 +127,10 @@ header {
 /* ── Rearrangeable dashboard (drag cards between responsive columns) ─────────── */
 .dashboard { display: flex; align-items: flex-start; gap: 14px; }
 .dash-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+/* If you drag every card out of a column, don't leave its share of the width as
+   dead space — collapse the empty column so the populated ones expand to fill
+   the page. (Reset layout restores the default multi-column spread.) */
+.dash-col:empty { display: none; }
 /* Cards keep their own styling; the column's flex-gap replaces per-card margin. */
 .dash-col > .dash-card { margin-bottom: 14px; }
 .dash-card { position: relative; }
@@ -443,7 +447,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       </div>
       <div>
         <h1 id="appTitle">STARR DB REPAIR</h1>
-        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.1</p>
+        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.2</p>
       </div>
     </div>
     <div class="header-right">
@@ -1638,7 +1642,7 @@ function switchApp(app) {
 
   // Header text
   document.getElementById('appTitle').textContent = cfg.name + ' DB REPAIR';
-  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.1';
+  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.2';
   document.getElementById('logoSvg').innerHTML    = cfg.icon;
   document.getElementById('termTitle').textContent = cfg.name + ' REPAIR LOG';
 
