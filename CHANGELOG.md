@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.3.3] — 2026-07-17
+
+### Added
+- **Grow/shrink dashboard columns by dragging — no Reset needed** — while you drag a card, any empty column now shows as a dashed **＋ drop-rail**, so you can pull a card into empty space to spin a column back up (1 → 2 → 3, capped by the screen width). Dropping a card into a rail expands it into a full column; emptying a column collapses it again. Previously, once a column collapsed (1.3.2) the only way back to more columns was **Reset layout**.
+
 ## [1.3.2] — 2026-07-17
 
 ### Fixed
