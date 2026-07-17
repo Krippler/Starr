@@ -162,14 +162,20 @@ header {
 .dash-card > .panel-head, .dash-card > .terminal-bar { position: relative; padding-left: 30px; }
 .drag-handle {
   position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
-  cursor: grab; user-select: none;
+  cursor: grab; user-select: none; touch-action: none;
   font-size: 14px; line-height: 1; color: var(--muted);
   opacity: 0; transition: opacity .15s;
 }
 .dash-card:hover .drag-handle, .dashboard.dnd-active .drag-handle { opacity: .5; }
 .drag-handle:hover { opacity: 1; color: var(--app); }
 .drag-handle:active { cursor: grabbing; }
-.dash-card.is-dragging { opacity: .35; }
+.dash-card.is-dragging { opacity: .3; }
+/* The floating clone that follows the pointer during a drag (pointer-based DnD). */
+.drag-clone {
+  position: fixed; left: 0; top: 0; margin: 0; z-index: 9999;
+  pointer-events: none; opacity: .92; border-radius: var(--radius);
+  box-shadow: 0 14px 44px rgba(0,0,0,.55);
+}
 .dash-col.drop-into { outline: 2px dashed var(--app); outline-offset: -2px; border-radius: var(--radius); }
 .dash-card.drop-before { box-shadow: 0 -3px 0 -1px var(--app); }
 .dash-card.drop-after  { box-shadow: 0 3px 0 -1px var(--app); }
@@ -467,7 +473,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       </div>
       <div>
         <h1 id="appTitle">STARR DB REPAIR</h1>
-        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.5</p>
+        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.6</p>
       </div>
     </div>
     <div class="header-right">
@@ -1210,7 +1216,7 @@ function toggleSection(name, ev) {
 const LAYOUT_KEY = 'starr_card_layout';
 const DEFAULT_CARD_ORDER = ['connection', 'log', 'ops', 'trends', 'backups', 'schedules', 'notifications'];
 let _dashInited = false;
-let _dragCard = null;
+let _drag = null;   // active pointer drag: { card, clone, dx, dy }
 
 function _columnCount() {
   const w = window.innerWidth;
@@ -1286,11 +1292,17 @@ function renderMasonry() {
     ids.forEach(id => col.appendChild(cards[id]));
     dash.appendChild(col);
   });
-  _wireDashboardDnD();   // one router on the dashboard covers all columns
   _injectHandles();
   document.getElementById('layoutTools').classList.toggle('show', Array.isArray(saved));
 }
 
+// ── Pointer-based card dragging ────────────────────────────────────────────────
+// Driven with pointer events + a floating clone, NOT native HTML5 drag-and-drop.
+// Native DnD proved unreliable here: adding the empty ＋ rail on dragstart
+// reflows the columns, and the browser's own drag hit-testing made the rightmost
+// column impossible to drag out of. Pointer events give full control and purely
+// coordinate-based routing (it doesn't matter what element is under the cursor),
+// so every column behaves the same.
 function _injectHandles() {
   document.querySelectorAll('#dashboard .dash-card').forEach(card => {
     if (card._handleWired) return;
@@ -1300,23 +1312,50 @@ function _injectHandles() {
     h.className = 'drag-handle';
     h.title = 'Drag to rearrange';
     h.textContent = '⠳';                       // ⠳ braille grip
-    h.setAttribute('draggable', 'true');
     head.insertBefore(h, head.firstChild);
-    h.addEventListener('dragstart', e => {
-      _dragCard = card;
-      card.classList.add('is-dragging');
-      document.getElementById('dashboard').classList.add('dnd-active');
-      e.dataTransfer.effectAllowed = 'move';
-      try { e.dataTransfer.setData('text/plain', card.dataset.card); } catch (_) {}
-    });
-    h.addEventListener('dragend', () => {
-      card.classList.remove('is-dragging');
-      document.getElementById('dashboard').classList.remove('dnd-active');
-      _dragCard = null;
-      _persistLayout();
-    });
+    h.addEventListener('pointerdown', e => _startDrag(e, card));
     card._handleWired = true;
   });
+}
+
+function _startDrag(e, card) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return;   // left button only
+  e.preventDefault();
+  e.stopPropagation();
+  const r = card.getBoundingClientRect();
+  const clone = card.cloneNode(true);
+  clone.classList.add('drag-clone');
+  clone.classList.remove('is-dragging');
+  clone.style.width = r.width + 'px';
+  clone.style.transform = `translate(${r.left}px, ${r.top}px)`;
+  document.body.appendChild(clone);
+  card.classList.add('is-dragging');
+  document.getElementById('dashboard').classList.add('dnd-active');
+  _drag = { card, clone, dx: e.clientX - r.left, dy: e.clientY - r.top };
+  window.addEventListener('pointermove', _onDragMove);
+  window.addEventListener('pointerup', _endDrag, { once: true });
+  window.addEventListener('pointercancel', _endDrag, { once: true });
+}
+
+function _onDragMove(e) {
+  if (!_drag) return;
+  _drag.clone.style.transform = `translate(${e.clientX - _drag.dx}px, ${e.clientY - _drag.dy}px)`;
+  const col = _columnAtX(e.clientX);
+  if (!col) return;
+  const card = _drag.card;
+  const after = _cardAfterPoint(col, e.clientY);   // live-move the real card to preview the drop
+  if (after == null) { if (col.lastElementChild !== card) col.appendChild(card); }
+  else if (after !== card) col.insertBefore(card, after);
+}
+
+function _endDrag() {
+  if (!_drag) return;
+  window.removeEventListener('pointermove', _onDragMove);
+  _drag.clone.remove();
+  _drag.card.classList.remove('is-dragging');
+  document.getElementById('dashboard').classList.remove('dnd-active');
+  _drag = null;
+  _persistLayout();
 }
 
 function _cardAfterPoint(col, y) {
@@ -1331,10 +1370,8 @@ function _cardAfterPoint(col, y) {
 // Pick the visible column whose horizontal band contains x. Bands tile the whole
 // dashboard width with no dead gaps: a column owns everything up to its right
 // edge; the rightmost column (often the empty ＋ rail while dragging) owns
-// everything to its right too. This is what makes dropping into an adjacent
-// column — or the far-right new-column rail — reliable, instead of depending on
-// landing the cursor precisely inside a thin column or falling into the gap
-// between two columns.
+// everything to its right too — so dropping into an adjacent column or the
+// far-right new-column rail is reliable, not dependent on hitting a thin target.
 function _columnAtX(x) {
   const cols = Array.from(document.querySelectorAll('#dashboard .dash-col'))
     .filter(c => getComputedStyle(c).display !== 'none');
@@ -1343,26 +1380,6 @@ function _columnAtX(x) {
     if (x < c.getBoundingClientRect().right) return c;
   }
   return cols[cols.length - 1];
-}
-
-// One dragover/drop router on the dashboard (not per-column), so the entire
-// width is a live drop surface. Routes by X-band, then positions within the
-// target column by Y.
-function _wireDashboardDnD() {
-  const dash = document.getElementById('dashboard');
-  if (dash._dndWired) return;
-  dash._dndWired = true;
-  dash.addEventListener('dragover', e => {
-    if (!_dragCard) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const col = _columnAtX(e.clientX);
-    if (!col) return;
-    const after = _cardAfterPoint(col, e.clientY);
-    if (after == null) { if (col.lastElementChild !== _dragCard) col.appendChild(_dragCard); }
-    else if (after !== _dragCard) col.insertBefore(_dragCard, after);
-  });
-  dash.addEventListener('drop', e => { if (_dragCard) e.preventDefault(); });
 }
 
 function _persistLayout() {
@@ -1687,7 +1704,7 @@ function switchApp(app) {
 
   // Header text
   document.getElementById('appTitle').textContent = cfg.name + ' DB REPAIR';
-  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.5';
+  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.6';
   document.getElementById('logoSvg').innerHTML    = cfg.icon;
   document.getElementById('termTitle').textContent = cfg.name + ' REPAIR LOG';
 
