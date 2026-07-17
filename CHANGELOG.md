@@ -3,6 +3,11 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.3.1] — 2026-07-17
+
+### Fixed
+- **Dashboard panel titles were pushed to the centre of their headers** — the drag grip added in 1.3.0 was injected as a flex child of each panel header, and with `justify-content: space-between` that turned every header into three items, centering the title (Connection, Repair Operations, etc.) instead of left-aligning it. The grip is now absolutely positioned in a small reserved gutter, out of the flex flow, so headers lay out exactly as before 1.3.0 with the grip appearing on hover.
+
 ## [1.3.0] — 2026-07-16
 
 ### Added

@@ -132,10 +132,15 @@ header {
 .dash-card { position: relative; }
 /* Grip handle injected into each card header by JS. Hidden until you hover the
    card (or while a drag is in progress), Fresharr-style. */
+/* The grip is absolutely positioned in a small reserved gutter so it is OUT of
+   the header's flex flow — otherwise it becomes a third flex item and
+   `justify-content: space-between` shoves each panel title to the centre. */
+.dash-card > .panel-head, .dash-card > .terminal-bar { position: relative; padding-left: 30px; }
 .drag-handle {
-  cursor: grab; user-select: none; flex-shrink: 0;
+  position: absolute; left: 9px; top: 50%; transform: translateY(-50%);
+  cursor: grab; user-select: none;
   font-size: 14px; line-height: 1; color: var(--muted);
-  opacity: 0; transition: opacity .15s; padding: 0 6px 0 0; margin-right: -2px;
+  opacity: 0; transition: opacity .15s;
 }
 .dash-card:hover .drag-handle, .dashboard.dnd-active .drag-handle { opacity: .5; }
 .drag-handle:hover { opacity: 1; color: var(--app); }
@@ -438,7 +443,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       </div>
       <div>
         <h1 id="appTitle">STARR DB REPAIR</h1>
-        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.0</p>
+        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.1</p>
       </div>
     </div>
     <div class="header-right">
@@ -1633,7 +1638,7 @@ function switchApp(app) {
 
   // Header text
   document.getElementById('appTitle').textContent = cfg.name + ' DB REPAIR';
-  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.0';
+  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.1';
   document.getElementById('logoSvg').innerHTML    = cfg.icon;
   document.getElementById('termTitle').textContent = cfg.name + ' REPAIR LOG';
 

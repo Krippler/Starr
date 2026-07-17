@@ -63,7 +63,7 @@ docker run -d \
   -v /mnt/user/appdata:/appdata:rw \
   -v /mnt/user/appdata/starr/backups:/backups \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  krippler52/starr:1.3.0
+  krippler52/starr:1.3.1
 ```
 
 **That's it for the host side.** Open the dashboard, paste each app's API key, click **Save Credentials**, and Starr remembers it for scheduled runs and reloads. URLs / DB paths / container names are auto-discovered from Docker.
@@ -72,7 +72,7 @@ docker run -d \
 
 | Tag | Use |
 |---|---|
-| `1.3.0` | exact version — recommended pin for production |
+| `1.3.1` | exact version — recommended pin for production |
 | `1.2` / `1` | floating minor / major |
 | `latest` | newest **released version** (updated on every version tag) |
 | `edge` | tip of `main` — newest merged code, for testing ahead of a release |
