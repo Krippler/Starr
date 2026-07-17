@@ -467,7 +467,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       </div>
       <div>
         <h1 id="appTitle">STARR DB REPAIR</h1>
-        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.4</p>
+        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.5</p>
       </div>
     </div>
     <div class="header-right">
@@ -1284,9 +1284,9 @@ function renderMasonry() {
     const col = document.createElement('div');
     col.className = 'dash-col';
     ids.forEach(id => col.appendChild(cards[id]));
-    _wireColumn(col);
     dash.appendChild(col);
   });
+  _wireDashboardDnD();   // one router on the dashboard covers all columns
   _injectHandles();
   document.getElementById('layoutTools').classList.toggle('show', Array.isArray(saved));
 }
@@ -1328,16 +1328,41 @@ function _cardAfterPoint(col, y) {
   return null;
 }
 
-function _wireColumn(col) {
-  col.addEventListener('dragover', e => {
+// Pick the visible column whose horizontal band contains x. Bands tile the whole
+// dashboard width with no dead gaps: a column owns everything up to its right
+// edge; the rightmost column (often the empty ＋ rail while dragging) owns
+// everything to its right too. This is what makes dropping into an adjacent
+// column — or the far-right new-column rail — reliable, instead of depending on
+// landing the cursor precisely inside a thin column or falling into the gap
+// between two columns.
+function _columnAtX(x) {
+  const cols = Array.from(document.querySelectorAll('#dashboard .dash-col'))
+    .filter(c => getComputedStyle(c).display !== 'none');
+  if (!cols.length) return null;
+  for (const c of cols) {
+    if (x < c.getBoundingClientRect().right) return c;
+  }
+  return cols[cols.length - 1];
+}
+
+// One dragover/drop router on the dashboard (not per-column), so the entire
+// width is a live drop surface. Routes by X-band, then positions within the
+// target column by Y.
+function _wireDashboardDnD() {
+  const dash = document.getElementById('dashboard');
+  if (dash._dndWired) return;
+  dash._dndWired = true;
+  dash.addEventListener('dragover', e => {
     if (!_dragCard) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    const after = _cardAfterPoint(col, e.clientY);   // live-move into place
-    if (after == null) { if (_dragCard.parentNode !== col || col.lastElementChild !== _dragCard) col.appendChild(_dragCard); }
+    const col = _columnAtX(e.clientX);
+    if (!col) return;
+    const after = _cardAfterPoint(col, e.clientY);
+    if (after == null) { if (col.lastElementChild !== _dragCard) col.appendChild(_dragCard); }
     else if (after !== _dragCard) col.insertBefore(_dragCard, after);
   });
-  col.addEventListener('drop', e => e.preventDefault());
+  dash.addEventListener('drop', e => { if (_dragCard) e.preventDefault(); });
 }
 
 function _persistLayout() {
@@ -1662,7 +1687,7 @@ function switchApp(app) {
 
   // Header text
   document.getElementById('appTitle').textContent = cfg.name + ' DB REPAIR';
-  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.4';
+  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.5';
   document.getElementById('logoSvg').innerHTML    = cfg.icon;
   document.getElementById('termTitle').textContent = cfg.name + ' REPAIR LOG';
 
