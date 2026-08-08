@@ -16,6 +16,7 @@
 ## ✨ Features
 
 - **Browser dashboard** — no SSH required, with a single Web Key gate
+- **Rearrangeable dashboard** — drag a panel's grip to reorder cards, move them between columns, or pull one into empty space to grow a new column (1–3 columns by width); **Reset layout** restores the default. Your arrangement is remembered in the browser.
 - **Live log streaming** via Server-Sent Events (SSE) — manual *and* scheduled runs stream into the same log
 - **Safe shutdown** — `docker stop` (preferred) or the app's shutdown API, with stability re-poll so a restart policy can't bring it back mid-repair
 - **6 SQLite operations** — integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE — with a one-click "Safe" preset
@@ -73,7 +74,7 @@ docker run -d \
 | Tag | Use |
 |---|---|
 | `1.3.6` | exact version — recommended pin for production |
-| `1.2` / `1` | floating minor / major |
+| `1.3` / `1` | floating minor / major |
 | `latest` | newest **released version** (updated on every version tag) |
 | `edge` | tip of `main` — newest merged code, for testing ahead of a release |
 
@@ -107,10 +108,13 @@ docker run -d \
 | `APPDATA_DIR` | `/appdata` | Container path of the host appdata root (rarely needs changing). |
 | `BACKUP_DIR` | `/backups` | Backup output directory inside the container. |
 | `BACKUP_COMPRESS` | `true` | Stream-compress backups to `.db.zst`. Set to `false` for plain `.db`. |
+| `BACKUP_ZSTD_LEVEL` | `10` | zstd compression level used when `BACKUP_COMPRESS` is on. |
 | `MAX_BACKUP_AGE_DAYS` | `7` | Boot default for backup retention. The dashboard can override globally and per-instance (0–365; `0` = keep forever). |
 | `SHUTDOWN_STABILITY_CHECKS` | `5` | After the first offline read, re-poll this many times to make sure the app stays offline (catches a restart-policy bounce). |
 | `SHUTDOWN_STABILITY_INTERVAL` | `3` | Seconds between stability re-polls. |
 | `STARR_DISABLE_SCHEDULER` | _(unset)_ | Set to `1` to disable the in-process APScheduler (used by the test suite). |
+| `APPRISE_TIMEOUT_SECONDS` | `30` | Per-notification timeout for Apprise dispatch. |
+| `FLASK_DEBUG` | `false` | Set to `true` to run the dev server in debug mode (`python server.py` only — the container runs gunicorn). |
 | `<APP>_APIKEY` | _(blank)_ | API key for an app — `SONARR_APIKEY`, `RADARR_APIKEY`, `LIDARR_APIKEY`, `SPORTARR_APIKEY`, `READARR_APIKEY`, `PROWLARR_APIKEY`, `WHISPARR_APIKEY`, `BAZARR_APIKEY`. The UI also has a **Save Credentials** button that persists API keys per instance without needing an env var. |
 | `<APP>_URL` | _(blank)_ | Optional URL override per app — `SONARR_URL`, `RADARR_URL`, etc. Format: `http://host:port[/urlbase]`. Only set when Docker discovery can't find the container or you want to point at a specific instance. |
 | `CORS_ORIGINS` | `http://localhost:8877` | CORS allowlist for the Web UI API. |
@@ -336,19 +340,24 @@ Starr/
 │   ├── notify.py            # Apprise / Signal / webhook dispatch
 │   ├── settings.py          # UI-adjustable settings (backup retention)
 │   ├── discovery.py         # Docker auto-discovery of *arr containers
+│   ├── gunicorn.conf.py     # gunicorn config (filters SSE keep-alive log noise)
 │   ├── requirements.txt
 │   └── templates/
 │       └── index.html       # Dashboard web UI (vanilla JS + SSE)
 ├── templates/
-│   └── unraid.xml           # Unraid Community Apps template
+│   ├── unraid.xml           # Unraid Community Apps template
+│   └── starr-icon.png       # Icon referenced by the Unraid template
 ├── tests/
 │   └── test_server.py       # pytest suite
 ├── .github/
 │   └── workflows/
 │       └── docker-publish.yml   # CI/CD → Docker Hub + GHCR (cosign-signed)
 ├── Dockerfile
+├── entrypoint.sh            # Reconciles PUID/PGID, chowns /backups, drops to non-root
 ├── docker-compose.yml
 ├── .env.example
+├── ca_profile.xml           # Unraid Community Apps maintainer profile
+├── PUBLISHING.md            # First-time Docker Hub + GitHub publishing setup
 ├── CHANGELOG.md
 ├── LICENSE
 └── README.md
