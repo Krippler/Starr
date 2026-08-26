@@ -3,6 +3,17 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
+## [1.3.7] — 2026-08-26
+
+### Fixed
+- **An interrupted run could leave your *arr container stopped.** `_step_restart` was only reached on explicit success/guard paths — the repair and restore workers' generic `except Exception` returned without it, so an unexpected error after shutdown left the app down with nothing to bring it back. The restart now runs from a `finally` in both workers (guarded so the normal path can't double-start).
+- **Starr dying mid-repair left the app stopped with no recovery.** Every `docker stop` is now journalled to `/backups/.starr-stopped.json` and cleared on restart; at boot Starr starts anything a previous process stopped but never restarted (OOM kill, container update, host reboot). Containers already running again are left alone, and the marker is kept for a later retry if the Docker socket isn't reachable.
+
+### Added
+- **Disk-space preflight.** There were no free-space checks anywhere: a backup could half-write and VACUUM could fail mid-rebuild — on Unraid that usually means filling the cache pool that also holds `docker.img` and appdata.
+  - Backups now refuse to start unless the destination has room for a worst-case (incompressible) copy plus margin, reporting what's needed vs available.
+  - VACUUM is skipped with a clear message when the database's filesystem can't fit the transient full copy it builds; the remaining operations still run.
+
 ## [1.3.6] — 2026-07-17
 
 ### Fixed

@@ -336,6 +336,149 @@ def _docker_container(name):
 
 
 # ---------------------------------------------------------------------------
+# Stopped-container bookkeeping
+#
+# Starr stops an *arr container to work on its idle database. If Starr then
+# dies before the restart step — OOM kill, container update, host reboot — the
+# *arr would stay stopped indefinitely with nothing to bring it back.
+#
+# So every stop is journalled to a file on the persistent /backups volume and
+# the entry is cleared once the container is started again. Two recovery paths
+# consume it:
+#   • in-process — the repair/restore workers restart in a `finally`, so an
+#     unexpected exception can't skip the restart
+#   • cross-process — _recover_stopped_containers() runs at import/boot and
+#     starts anything left behind by a previous process
+# ---------------------------------------------------------------------------
+STOPPED_MARKER_NAME = ".starr-stopped.json"
+_stopped_lock = threading.Lock()
+
+
+def _stopped_marker_path() -> Path:
+    return app.config["BACKUP_DIR"] / STOPPED_MARKER_NAME
+
+
+def _load_stopped() -> dict:
+    try:
+        with open(_stopped_marker_path(), "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (FileNotFoundError, ValueError, OSError):
+        return {}
+
+
+def _write_stopped(data: dict) -> None:
+    """Persist the journal. Best-effort: a repair must never fail because the
+    marker couldn't be written — the in-process `finally` still covers the
+    common case."""
+    path = _stopped_marker_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if data:
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+            tmp.replace(path)            # atomic swap; never a half-written file
+        else:
+            path.unlink(missing_ok=True)  # nothing outstanding — drop the file
+    except OSError as e:
+        log.warning("Could not update %s: %s", path, e)
+
+
+def _mark_container_stopped(name: str, label: str = "") -> None:
+    if not name:
+        return
+    with _stopped_lock:
+        data = _load_stopped()
+        data[name] = {"stopped_at": time.time(), "instance": label}
+        _write_stopped(data)
+
+
+def _clear_container_stopped(name: str) -> None:
+    if not name:
+        return
+    with _stopped_lock:
+        data = _load_stopped()
+        if data.pop(name, None) is not None:
+            _write_stopped(data)
+
+
+def _recover_stopped_containers() -> list[str]:
+    """Start any container a previous Starr process stopped but never restarted.
+
+    Only touches containers that are still not running — if the user (or a
+    later run) already started it, or deliberately stopped it themselves after
+    ours, we clear the entry without interfering. Returns the names started."""
+    outstanding = _load_stopped()
+    if not outstanding:
+        return []
+
+    started = []
+    for name in list(outstanding):
+        client, container = _docker_container(name)
+        if container is None:
+            # Can't reach the daemon or the container is gone. Leave the entry
+            # in place so a later boot (with the socket mounted) can retry.
+            log.warning("Recovery: container %r not reachable — leaving marker in place.", name)
+            continue
+        try:
+            status = (container.status or "").lower()
+            if status == "running":
+                log.info("Recovery: container %r is already running.", name)
+            else:
+                container.start()
+                started.append(name)
+                log.warning("Recovery: started %r — it was left stopped by an interrupted run.", name)
+            _clear_container_stopped(name)
+        except Exception as e:
+            log.error("Recovery: failed to start %r: %s", name, e)
+        finally:
+            _close_docker_client(client)
+    return started
+
+
+def _ensure_container_started(cfg: dict) -> None:
+    """Last-resort restart used from the workers' `finally`. No-ops when the
+    normal restart step already ran, so the happy path is untouched."""
+    name = cfg.get("_docker_managed")
+    if not name or cfg.get("_restart_done"):
+        return
+    cfg["_restart_done"] = True
+    emit("WARN", f"Run ended without completing the restart step — starting '{name}' now.", "warn")
+    client, container = _docker_container(name)
+    if container is None:
+        emit("ERR", f"Cannot reach container '{name}' to start it. Start it manually:", "err")
+        emit("SYS", f"  docker start {name}", "sys")
+        return
+    try:
+        container.start()
+        emit("OK", f"Container '{name}' started.", "ok")
+        _clear_container_stopped(name)
+    except Exception as e:
+        emit("ERR", f"docker start failed: {e} — start it manually:", "err")
+        emit("SYS", f"  docker start {name}", "sys")
+    finally:
+        _close_docker_client(client)
+
+
+def _free_bytes(path) -> int | None:
+    """Free bytes on the filesystem holding `path` (walks up to the nearest
+    existing parent). None if it can't be determined."""
+    p = Path(path)
+    for candidate in [p] + list(p.parents):
+        try:
+            if candidate.exists():
+                return shutil.disk_usage(candidate).free
+        except OSError:
+            return None
+    return None
+
+
+def _fmt_mb(n: float) -> str:
+    return f"{n / 1_048_576:.1f} MB"
+
+
+# ---------------------------------------------------------------------------
 # Repair steps
 # ---------------------------------------------------------------------------
 def _resolve_db_override(app_name: str, override: str | None) -> str:
@@ -507,6 +650,9 @@ def _step_shutdown(cfg) -> bool:
             # app over HTTP, not Docker, so release the client now.
             _close_docker_client(client)
             cfg["_docker_managed"] = container_name
+            # Journal the stop before we touch anything else, so even a hard
+            # process death from here on is recoverable at the next boot.
+            _mark_container_stopped(container_name, cfg.get("label") or cfg.get("app", ""))
             # Confirm the app's API is actually gone — a stopped container's
             # network endpoint refuses connections. If stop() returned cleanly
             # the container is already down (short confirm); if it timed out we
@@ -588,7 +734,23 @@ def _step_backup(cfg, db_path: str) -> str | None:
 
     emit("INFO", f"Source : {db_path}", "info")
     emit("INFO", f"Dest   : {dest}", "info")
-    src_mb = Path(db_path).stat().st_size / 1_048_576
+    src_bytes = Path(db_path).stat().st_size
+    src_mb = src_bytes / 1_048_576
+
+    # Refuse rather than half-write. Compression usually shrinks an *arr DB a
+    # lot, but the ratio isn't knowable up front, so budget for the worst case
+    # (an incompressible copy) plus a small margin. Filling /backups is a real
+    # hazard on Unraid, where it typically lands on the cache pool alongside
+    # docker.img and every other appdata share.
+    need = int(src_bytes * 1.05) + 16 * 1_048_576
+    free = _free_bytes(app.config["BACKUP_DIR"])
+    if free is not None and free < need:
+        emit("ERR", f"Not enough free space in {app.config['BACKUP_DIR']} for a backup.", "err")
+        emit("ERR", f"Need ~{_fmt_mb(need)} (database is {_fmt_mb(src_bytes)}), "
+                    f"but only {_fmt_mb(free)} is free.", "err")
+        emit("SYS", "Free some space or delete old backups, then re-run.", "sys")
+        return None
+
     try:
         if compress:
             try:
@@ -725,7 +887,21 @@ def _step_repair(cfg, db_path: str) -> dict:
                     results[op] = ("ok", row[2])
 
                 elif op == "vacuum":
-                    before = Path(db_path).stat().st_size / 1_048_576
+                    db_bytes = Path(db_path).stat().st_size
+                    before = db_bytes / 1_048_576
+                    # VACUUM rebuilds the database into a temporary copy beside
+                    # it, so it transiently needs roughly its own size again.
+                    # Checking first turns "ran out of space mid-VACUUM" into a
+                    # clean skip that still leaves the rest of the run intact.
+                    vac_need = int(db_bytes * 1.1) + 16 * 1_048_576
+                    vac_free = _free_bytes(Path(db_path).parent)
+                    if vac_free is not None and vac_free < vac_need:
+                        emit("ERR", f"Skipping VACUUM — needs ~{_fmt_mb(vac_need)} free next to "
+                                    f"the database but only {_fmt_mb(vac_free)} is available.", "err")
+                        emit("SYS", "VACUUM writes a full temporary copy of the DB; free some "
+                                    "space on that filesystem and re-run.", "sys")
+                        results[op] = ("error", "insufficient free space for VACUUM")
+                        continue
                     emit("INFO", f"Pre-VACUUM: {before:.1f} MB", "info")
                     con.execute("VACUUM"); con.commit()
                     after = Path(db_path).stat().st_size / 1_048_576
@@ -820,6 +996,9 @@ def _step_restart(cfg, results) -> None:
     # exit state, so unless-stopped won't auto-start it.
     docker_managed = cfg.get("_docker_managed")
     if docker_managed:
+        # Claim the restart here so the workers' `finally` safety net doesn't
+        # fire a second start for the same container.
+        cfg["_restart_done"] = True
         client, container = _docker_container(docker_managed)
         if container is None:
             emit("ERR", f"Cannot reach container '{docker_managed}' to start it.", "err")
@@ -829,6 +1008,7 @@ def _step_restart(cfg, results) -> None:
             try:
                 container.start()
                 emit("OK", f"Container '{docker_managed}' started.", "ok")
+                _clear_container_stopped(docker_managed)
             except Exception as e:
                 emit("ERR", f"docker start failed: {e}", "err")
                 emit("SYS", f"  docker start {docker_managed}", "sys")
@@ -879,7 +1059,7 @@ def _repair_worker(cfg: dict) -> None:
     _job.history    = []
     _job.result     = None
 
-    emit("SYS", f"Starr DB Repair v1.3.6 – job started for {cfg['app'].upper()}", "sys")
+    emit("SYS", f"Starr DB Repair v1.3.7 – job started for {cfg['app'].upper()}", "sys")
     emit("SYS", f"Dry run: {cfg.get('dry_run', False)}", "sys")
 
     db_path = None
@@ -959,6 +1139,10 @@ def _repair_worker(cfg: dict) -> None:
         log.exception("Repair worker crashed")
         _job.result = {"status": "error", "message": str(e)}
     finally:
+        # Safety net: if we stopped the container and never reached the restart
+        # step (unexpected exception, or an early return that predates it), the
+        # app would otherwise stay down. No-op when the restart already ran.
+        _ensure_container_started(cfg)
         _job.running = False
         # Make sure the UI always gets a terminal __DONE__ event, even on
         # early-return paths (preflight / shutdown / backup-safety / restart
@@ -1107,6 +1291,9 @@ def _restore_worker(cfg: dict) -> None:
         log.exception("Restore worker crashed")
         _job.result = {"status": "error", "message": str(e)}
     finally:
+        # Same safety net as the repair worker — never leave the app stopped
+        # because a restore failed somewhere unexpected.
+        _ensure_container_started(cfg)
         _job.running = False
         if not any(h.get("cls") == "__done__" for h in _job.history):
             emit("__DONE__", json.dumps({
@@ -1904,6 +2091,18 @@ else:
         _refresh_discovery()
     except Exception:
         log.exception("Initial discovery scan failed (will retry on demand)")
+
+# Crash recovery: if a previous Starr process stopped an *arr container and
+# died before restarting it (OOM kill, container update, host reboot), bring it
+# back now. Runs regardless of the scheduler setting — an app left down is the
+# worst failure mode this tool has, and nothing else would notice.
+try:
+    _recovered = _recover_stopped_containers()
+    if _recovered:
+        log.warning("Startup recovery started %d container(s) left stopped by an "
+                    "interrupted run: %s", len(_recovered), ", ".join(_recovered))
+except Exception:
+    log.exception("Startup recovery of stopped containers failed")
 
 
 def _scheduler_required():
