@@ -19,6 +19,8 @@
 - **Rearrangeable dashboard** — drag a panel's grip to reorder cards, move them between columns, or pull one into empty space to grow a new column (1–3 columns by width); **Reset layout** restores the default. Your arrangement is remembered in the browser.
 - **Live log streaming** via Server-Sent Events (SSE) — manual *and* scheduled runs stream into the same log
 - **Safe shutdown** — `docker stop` (preferred) or the app's shutdown API, with stability re-poll so a restart policy can't bring it back mid-repair
+- **Never leaves your app down** — every stop is journalled, the restart is guaranteed even if a run fails unexpectedly, and if Starr itself is killed mid-repair (OOM, container update, host reboot) it restarts the stopped container on next boot
+- **Disk-space preflight** — refuses to start a backup, or skips VACUUM, when the target filesystem lacks room, instead of half-writing and filling your cache pool
 - **6 SQLite operations** — integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE — with a one-click "Safe" preset
 - **Dry-run mode** — preview every step without touching the DB
 - **Cancel mid-VACUUM** — Stop calls `Connection.interrupt()` so a long VACUUM / REINDEX aborts in milliseconds, not minutes
@@ -64,7 +66,7 @@ docker run -d \
   -v /mnt/user/appdata:/appdata:rw \
   -v /mnt/user/appdata/starr/backups:/backups \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  krippler52/starr:1.3.6
+  krippler52/starr:1.3.7
 ```
 
 **That's it for the host side.** Open the dashboard, paste each app's API key, click **Save Credentials**, and Starr remembers it for scheduled runs and reloads. URLs / DB paths / container names are auto-discovered from Docker.
@@ -73,7 +75,7 @@ docker run -d \
 
 | Tag | Use |
 |---|---|
-| `1.3.6` | exact version — recommended pin for production |
+| `1.3.7` | exact version — recommended pin for production |
 | `1.3` / `1` | floating minor / major |
 | `latest` | newest **released version** (updated on every version tag) |
 | `edge` | tip of `main` — newest merged code, for testing ahead of a release |
@@ -87,7 +89,7 @@ docker run -d \
 | Container path | Purpose |
 |---|---|
 | `/appdata` | Host appdata root. Starr inspects each *arr container, finds its `/config` mount, and walks the relative path inside `/appdata` to locate the DB. One mount replaces the old per-app mounts. |
-| `/backups` | Backup output — timestamped `.db.zst` (or `.db` if compression is off). Also stores hidden settings files: `.starr-schedules.json`, `.starr-history.json`, `.starr-notify.json`, `.starr-instances.json`, `.starr-instance-overrides.json`, `.starr-settings.json`. |
+| `/backups` | Backup output — timestamped `.db.zst` (or `.db` if compression is off). Also stores hidden settings files: `.starr-schedules.json`, `.starr-history.json`, `.starr-notify.json`, `.starr-instances.json`, `.starr-instance-overrides.json`, `.starr-settings.json`, `.starr-stopped.json` (containers Starr has stopped, used for crash recovery). |
 | `/var/run/docker.sock` | (Optional, **strongly recommended**) Docker socket — enables auto-discovery and container-managed stop/start. Without it, Starr falls back to the app's HTTP shutdown API. |
 
 > **Mount mode:** `/appdata` must be `rw` — VACUUM, REINDEX, FK repair, and WAL checkpoint write back to the source `.db`. The pre-repair backup happens *first*, so the source DB is only ever touched after a successful backup.

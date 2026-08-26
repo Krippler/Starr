@@ -1899,3 +1899,217 @@ def test_docker_stop_non_timeout_error_fails_fast(monkeypatch):
            "container_name": "sonarr"}
     assert srv._step_shutdown(cfg) is False
     assert polled == []   # no offline-poll on a hard failure
+
+
+# ── Restart guarantee: never leave an *arr container stopped ──────────────────
+def _stub_backup_dir(tmp_path):
+    """Point the stopped-container journal at a scratch dir."""
+    srv.app.config["BACKUP_DIR"] = tmp_path / "backups"
+    (tmp_path / "backups").mkdir(exist_ok=True)
+
+
+def test_repair_worker_restarts_container_when_repair_crashes(monkeypatch, tmp_path):
+    """The regression this guards: if anything after shutdown raises, the
+    container must still be started again. Before the fix the generic
+    `except Exception` returned without restarting and the app stayed down."""
+    _stub_backup_dir(tmp_path)
+    srv._job.reset(); srv._job.start_time = srv.time.time()
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+
+    db = tmp_path / "sonarr.db"
+    sqlite3.connect(db).close()
+
+    monkeypatch.setattr(srv, "_step_preflight", lambda cfg: str(db))
+    def fake_shutdown(cfg):
+        cfg["_docker_managed"] = "sonarr"      # pretend we stopped it
+        return True
+    monkeypatch.setattr(srv, "_step_shutdown", fake_shutdown)
+    monkeypatch.setattr(srv, "_step_backup", lambda cfg, p: str(tmp_path / "b.db"))
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)
+    monkeypatch.setattr(srv, "_record_history", lambda *a, **k: None)
+    monkeypatch.setattr(srv._notify, "maybe_notify", lambda *a, **k: None)
+
+    # Blow up *after* the container is stopped.
+    def boom(cfg, db_path):
+        raise RuntimeError("kaboom")
+    monkeypatch.setattr(srv, "_step_repair", boom)
+
+    started = []
+    class FakeContainer:
+        def start(self): started.append("sonarr")
+    monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+
+    srv._repair_worker({"app": "sonarr", "host": "h", "port": 1, "apikey": "k",
+                        "container_name": "sonarr"})
+
+    assert started == ["sonarr"], "container must be restarted even when the repair crashes"
+    assert srv._job.result["status"] == "error"
+
+
+def test_restart_safety_net_does_not_double_start(monkeypatch, tmp_path):
+    """_step_restart already started the container — the finally-block net must
+    not start it a second time."""
+    _stub_backup_dir(tmp_path)
+    srv._job.reset(); srv._job.start_time = srv.time.time()
+
+    started = []
+    class FakeContainer:
+        def start(self): started.append(1)
+    monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: {"version": "1"})
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+
+    cfg = {"app": "sonarr", "host": "h", "port": 1, "apikey": "k",
+           "_docker_managed": "sonarr"}
+    srv._step_restart(cfg, {})
+    assert cfg.get("_restart_done") is True
+    srv._ensure_container_started(cfg)          # safety net runs after
+    assert len(started) == 1, "safety net must not issue a second start"
+
+
+def test_ensure_container_started_noop_without_managed_container(tmp_path):
+    """Nothing to do when Starr never stopped a container (e.g. skip_shutdown)."""
+    _stub_backup_dir(tmp_path)
+    srv._job.reset()
+    srv._ensure_container_started({"app": "sonarr"})     # must not raise
+
+
+# ── Crash recovery across a process restart ──────────────────────────────────
+def test_stop_is_journalled_and_cleared(monkeypatch, tmp_path):
+    """A stop writes the marker; the restart clears it."""
+    _stub_backup_dir(tmp_path)
+    srv._job.reset(); srv._job.start_time = 0
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+
+    class FakeContainer:
+        status = "running"
+        def stop(self, timeout=30): pass
+        def start(self): pass
+    monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)
+
+    cfg = {"app": "sonarr", "host": "h", "port": 1, "apikey": "k",
+           "container_name": "sonarr"}
+    assert srv._step_shutdown(cfg) is True
+    assert "sonarr" in srv._load_stopped(), "stop must be journalled for crash recovery"
+
+    # App answers again once restarted, so the restart step returns promptly.
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: {"version": "1"})
+    srv._step_restart(cfg, {})
+    assert "sonarr" not in srv._load_stopped(), "restart must clear the journal entry"
+
+
+def test_recovery_starts_container_left_stopped(monkeypatch, tmp_path):
+    """Simulates: previous process stopped sonarr, then died. Boot recovery
+    must start it and clear the marker."""
+    _stub_backup_dir(tmp_path)
+    srv._mark_container_stopped("sonarr", "sonarr")
+
+    started = []
+    class FakeContainer:
+        status = "exited"
+        def start(self): started.append("sonarr")
+    monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+
+    assert srv._recover_stopped_containers() == ["sonarr"]
+    assert started == ["sonarr"]
+    assert srv._load_stopped() == {}
+
+
+def test_recovery_leaves_running_container_alone(monkeypatch, tmp_path):
+    """If the container is already running again, don't touch it — just clear."""
+    _stub_backup_dir(tmp_path)
+    srv._mark_container_stopped("sonarr", "sonarr")
+
+    started = []
+    class FakeContainer:
+        status = "running"
+        def start(self): started.append("sonarr")
+    monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+
+    assert srv._recover_stopped_containers() == []
+    assert started == []
+    assert srv._load_stopped() == {}
+
+
+def test_recovery_keeps_marker_when_daemon_unreachable(monkeypatch, tmp_path):
+    """Socket not mounted / daemon down: keep the marker so a later boot retries."""
+    _stub_backup_dir(tmp_path)
+    srv._mark_container_stopped("sonarr", "sonarr")
+    monkeypatch.setattr(srv, "_docker_container", lambda n: (None, None))
+
+    assert srv._recover_stopped_containers() == []
+    assert "sonarr" in srv._load_stopped()
+
+
+def test_recovery_noop_with_no_marker(tmp_path):
+    _stub_backup_dir(tmp_path)
+    assert srv._recover_stopped_containers() == []
+
+
+# ── Disk-space preflights ─────────────────────────────────────────────────────
+def test_backup_refuses_when_disk_nearly_full(monkeypatch, tmp_path):
+    """Backing up must fail cleanly (not half-write) when /backups lacks room."""
+    _stub_backup_dir(tmp_path)
+    srv._job.reset(); srv._job.start_time = 0
+
+    db = tmp_path / "sonarr.db"
+    db.write_bytes(b"x" * 4_000_000)
+    monkeypatch.setattr(srv, "_free_bytes", lambda p: 1_000_000)   # only 1 MB free
+
+    assert srv._step_backup({"app": "sonarr"}, str(db)) is None
+    msgs = " ".join(h["msg"] for h in srv._job.history)
+    assert "Not enough free space" in msgs
+    assert not list((tmp_path / "backups").glob("*.db*")), "must not leave a partial backup"
+
+
+def test_backup_proceeds_when_space_is_available(monkeypatch, tmp_path):
+    _stub_backup_dir(tmp_path)
+    srv._job.reset(); srv._job.start_time = 0
+
+    db = tmp_path / "sonarr.db"
+    sqlite3.connect(db).close()
+    monkeypatch.setattr(srv, "_free_bytes", lambda p: 10 * 1024 * 1024 * 1024)
+
+    out = srv._step_backup({"app": "sonarr"}, str(db))
+    assert out is not None and os.path.exists(out)
+
+
+def test_vacuum_skipped_when_insufficient_space(monkeypatch, tmp_path):
+    """VACUUM needs a transient full copy — skip it rather than fail mid-write,
+    and let the rest of the run continue."""
+    srv._job.reset(); srv._job.start_time = 0
+
+    db = tmp_path / "sonarr.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE t (a)")
+    con.commit(); con.close()
+
+    monkeypatch.setattr(srv, "_free_bytes", lambda p: 1)     # 1 byte free
+    results = srv._step_repair({"app": "sonarr", "ops": ["vacuum", "analyze"]}, str(db))
+
+    assert results["vacuum"][0] == "error"
+    assert results["analyze"][0] == "ok", "later ops must still run after a skipped VACUUM"
+    msgs = " ".join(h["msg"] for h in srv._job.history)
+    assert "Skipping VACUUM" in msgs
+
+
+def test_vacuum_runs_when_space_available(monkeypatch, tmp_path):
+    srv._job.reset(); srv._job.start_time = 0
+    db = tmp_path / "sonarr.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE t (a)")
+    con.commit(); con.close()
+
+    monkeypatch.setattr(srv, "_free_bytes", lambda p: 10 * 1024 * 1024 * 1024)
+    results = srv._step_repair({"app": "sonarr", "ops": ["vacuum"]}, str(db))
+    assert results["vacuum"][0] == "ok"
+
+
+def test_free_bytes_returns_number_for_real_path(tmp_path):
+    assert isinstance(srv._free_bytes(tmp_path), int)
+
+
+def test_free_bytes_walks_up_to_existing_parent(tmp_path):
+    """BACKUP_DIR may not exist yet on a first run — still get a real number."""
+    assert isinstance(srv._free_bytes(tmp_path / "does" / "not" / "exist"), int)
