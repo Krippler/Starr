@@ -15,29 +15,37 @@
 
 ## ✨ Features
 
-- **Browser dashboard** — no SSH required, with a single Web Key gate
-- **Rearrangeable dashboard** — drag a panel's grip to reorder cards, move them between columns, or pull one into empty space to grow a new column (1–3 columns by width); **Reset layout** restores the default. Your arrangement is remembered in the browser.
-- **Live log streaming** via Server-Sent Events (SSE) — manual *and* scheduled runs stream into the same log
-- **Safe shutdown** — `docker stop` (preferred) or the app's shutdown API, with stability re-poll so a restart policy can't bring it back mid-repair
-- **Never leaves your app down** — every stop is journalled, the restart is guaranteed even if a run fails unexpectedly, and if Starr itself is killed mid-repair (OOM, container update, host reboot) it restarts the stopped container on next boot
-- **Disk-space preflight** — refuses to start a backup, or skips VACUUM, when the target filesystem lacks room, instead of half-writing and filling your cache pool
-- **6 SQLite operations** — integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE — with a one-click "Safe" preset
+**Repair**
+- **6 SQLite operations** — integrity check, FK repair, WAL checkpoint, VACUUM, REINDEX, ANALYZE — plus a one-click "Safe" preset
 - **Dry-run mode** — preview every step without touching the DB
-- **Cancel mid-VACUUM** — Stop calls `Connection.interrupt()` so a long VACUUM / REINDEX aborts in milliseconds, not minutes
-- **Auto-backup** before every repair, **zstd-compressed** by default
-- **Backup retention** adjustable from the dashboard up to 1 year (or *Forever*) — **global default + per-instance overrides**, so a daily-backed Sonarr can keep 14 days while a weekly Sonarr-4K keeps a year
-- **Restore from backup** — one-click restore puts a chosen backup back over the live DB (stops → snapshots current → writes → starts)
-- **Outcome-flagged backups** — files are renamed `…_clean.db.zst` / `…_repaired.db.zst` / `…_aborted.db.zst` so it's obvious which to keep
-- **Bulk-select delete** — checkbox in each backup row + a "Delete selected" action
-- **Scheduled repairs** — cron-style, per app/instance, with **skip-if-clean** (probes `quick_check` + `foreign_key_check` and skips the whole run if the DB is already clean)
-- **Multiple instances per app** — manage more than one of the same *arr (e.g. a second Sonarr at a different URL); each instance has its own backups, history, schedules, and retention
-- **Run history** — every completed repair is recorded; powers a **last-run pill**, a **pre-repair time estimate** ("~2m, based on 4 runs"), and **per-instance DB-size / repair-duration trend charts**
-- **Notifications** on completion — **Apprise** (Discord / Telegram / ntfy / Pushover / Slack / gotify / email / 100+ services), **Signal** via [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api), and **plain JSON webhooks**, with per-schedule level overrides (off / error / warning+ / always)
-- **Persisted credentials** — typed an API key in the UI? It's saved per instance, so reloads and scheduled runs use it without an env var
-- **Docker auto-discovery** — one `/appdata` mount + the Docker socket → Starr finds each *arr's container, URL, DB path, and bridge IP automatically; UI shows the host-perspective URL but talks to the bridge IP internally
-- **Eight *arr apps supported** — Sonarr · Radarr · Lidarr · Sportarr · Readarr · Prowlarr · Whisparr · Bazarr (correct API versions and DB paths per app)
-- **Docker image** — `linux/amd64`, published to Docker Hub + GHCR, signed with cosign
-- **Unraid Community Apps template** included
+- **Cancel mid-VACUUM** — Stop calls `Connection.interrupt()`, aborting a long VACUUM/REINDEX in milliseconds
+- **Scheduled repairs** — cron-style, per app/instance, with **skip-if-clean** (probes `quick_check` + `foreign_key_check` and skips the run if the DB is already clean)
+
+**Safety**
+- **Safe shutdown** — `docker stop` (preferred) or the app's shutdown API, with a stability re-poll so a restart policy can't bring the app back mid-repair
+- **Never leaves your app down** — stops are journalled and the restart is guaranteed; if Starr itself is killed mid-repair (OOM, update, reboot) it restarts the container at next boot
+- **Disk-space preflight** — refuses a backup, or skips VACUUM, rather than half-writing and filling your disk
+- **Auto-backup** before every repair, zstd-compressed by default
+- **Restore from backup** — one click: stops the app, snapshots the current DB, writes the backup, starts it again
+
+**Backups**
+- **Retention** up to 1 year (or *Forever*), as a global default with per-instance overrides
+- **Outcome-flagged files** — `…_clean` / `…_repaired` / `…_aborted` so it's obvious which to keep
+- **Bulk-select delete** from the dashboard
+
+**Dashboard**
+- **Browser UI** — no SSH required, gated by a single Web Key
+- **Live log streaming** over SSE — manual *and* scheduled runs share one log
+- **Rearrangeable panels** — drag by the grip to reorder, move between columns, or grow 1–3 columns; **Reset layout** restores the default. Saved per browser.
+- **Run history** — powers a last-run pill, a pre-repair estimate ("~2m, based on 4 runs"), and per-instance size/duration trend charts
+
+**Setup**
+- **Docker auto-discovery** — one `/appdata` mount + the Docker socket finds each *arr's container, URL, DB path, and bridge IP
+- **Multiple instances per app** — e.g. a second Sonarr, each with its own backups, history, schedules, and retention
+- **Persisted credentials** — API keys entered in the UI are saved per instance, so reloads and scheduled runs need no env var
+- **Notifications** — [Apprise](https://github.com/caronc/apprise) (Discord / Telegram / ntfy / Pushover / Slack / gotify / email / 100+), Signal via [signal-cli-rest-api](https://github.com/bbernhard/signal-cli-rest-api), or JSON webhooks, with per-schedule levels (off / error / warning / always)
+- **Eight *arr apps** — Sonarr · Radarr · Lidarr · Sportarr · Readarr · Prowlarr · Whisparr · Bazarr, each with the right API version and DB path
+- **`linux/amd64` image** on Docker Hub + GHCR, signed with cosign, with an Unraid Community Apps template
 
 ---
 
@@ -80,7 +88,7 @@ docker run -d \
 | `latest` | newest **released version** (updated on every version tag) |
 | `edge` | tip of `main` — newest merged code, for testing ahead of a release |
 
-> **Releases are fully automatic.** Merging a release PR (one that flips `CHANGELOG.md`'s `[Unreleased]` section to `[X.Y.Z]`) is enough — CI publishes the version pins (`X.Y.Z` / `X.Y` / `X`), moves **`latest`** to that release, auto-creates the `vX.Y.Z` git tag, and creates the matching **GitHub Release** with notes from the [CHANGELOG](CHANGELOG.md). Plain merges to `main` (no version flip) only update `edge`. Pushing a `v*.*.*` tag manually still works the same — useful for re-running the release pipeline.
+> Releases are automatic: merging a release PR publishes the images, tag, and GitHub Release in one CI run. See [PUBLISHING.md](PUBLISHING.md).
 
 ---
 
@@ -88,13 +96,13 @@ docker run -d \
 
 | Container path | Purpose |
 |---|---|
-| `/appdata` | Host appdata root. Starr inspects each *arr container, finds its `/config` mount, and walks the relative path inside `/appdata` to locate the DB. One mount replaces the old per-app mounts. |
-| `/backups` | Backup output — timestamped `.db.zst` (or `.db` if compression is off). Also stores hidden settings files: `.starr-schedules.json`, `.starr-history.json`, `.starr-notify.json`, `.starr-instances.json`, `.starr-instance-overrides.json`, `.starr-settings.json`, `.starr-stopped.json` (containers Starr has stopped, used for crash recovery). |
-| `/var/run/docker.sock` | (Optional, **strongly recommended**) Docker socket — enables auto-discovery and container-managed stop/start. Without it, Starr falls back to the app's HTTP shutdown API. |
+| `/appdata` | Host appdata root, mounted **`rw`**. Starr inspects each *arr container, finds its `/config` mount, and walks the relative path inside `/appdata` to locate the DB. |
+| `/backups` | Backup output — timestamped `.db.zst` (or `.db` with compression off), plus Starr's own state files (`.starr-*.json`: schedules, history, notify, instances, credential overrides, settings, and stopped-container recovery markers). |
+| `/var/run/docker.sock` | Optional but **strongly recommended** — enables auto-discovery and container-managed stop/start. Without it, Starr falls back to the app's HTTP shutdown API. |
 
-> **Mount mode:** `/appdata` must be `rw` — VACUUM, REINDEX, FK repair, and WAL checkpoint write back to the source `.db`. The pre-repair backup happens *first*, so the source DB is only ever touched after a successful backup.
+> **Why `rw`:** VACUUM, REINDEX, FK repair, and WAL checkpoint all write back to the source `.db`. The backup runs *first*, so the source is only touched after it succeeds.
 
-> **Permissions:** Starr runs as `PUID:PGID` (default `99:100` on Unraid, `1000:1000` via compose). The entrypoint chowns `/backups` on startup so backups always work. `/appdata` is **not** chowned (it belongs to the *arr apps) — `PUID:PGID` must own or share a group with those config dirs so VACUUM/REINDEX can write.
+> **Permissions:** Starr runs as `PUID:PGID` (`99:100` on Unraid, `1000:1000` via compose). The entrypoint chowns `/backups` on startup. `/appdata` is **not** chowned — it belongs to the *arr apps, so `PUID:PGID` must own or share a group with those config dirs.
 
 ---
 
@@ -142,18 +150,21 @@ Backups, history, schedules, restore, and **retention** are all keyed by instanc
 
 ## 🐳 Container-managed shutdown (recommended for Docker / Unraid)
 
-On any host with a restart policy (`--restart unless-stopped`, the Unraid default), the app's HTTP shutdown endpoint can't keep it down — Docker restarts the container seconds later, while Starr is mid-repair. The reliable fix is to let Starr **stop and start the container directly** via the Docker socket:
+With a restart policy in place (`--restart unless-stopped`, the Unraid default), the app's HTTP shutdown endpoint can't keep it down — Docker restarts it seconds later, mid-repair. Mounting the Docker socket lets Starr stop and start the container directly instead:
 
-1. **Mount the Docker socket** — `-v /var/run/docker.sock:/var/run/docker.sock` (the Unraid template and `docker-compose.yml` include this by default).
-2. **Auto-discovery handles the container name** — no env var needed.
+```
+-v /var/run/docker.sock:/var/run/docker.sock
+```
 
-The repair sequence becomes `docker stop sonarr` → backup → SQLite ops on the idle DB → `docker start sonarr`. If the socket isn't mounted, Starr falls back to the app's shutdown API plus stability re-poll. Verify the daemon is reachable:
+The Unraid template and `docker-compose.yml` include it by default, and auto-discovery resolves the container name — no env var needed. The sequence becomes `docker stop sonarr` → backup → SQLite ops on the idle DB → `docker start sonarr`. Without the socket, Starr falls back to the shutdown API plus stability re-poll.
+
+Check the daemon is reachable:
 
 ```bash
 docker exec starr python3 -c "import docker; print(docker.from_env().ping())"   # True = ready
 ```
 
-> **Security:** mounting `/var/run/docker.sock` grants the Starr container root-equivalent control of the host Docker daemon (the same tradeoff as Portainer / Watchtower / Dockge). Leave it unmounted to disable Docker-managed operation entirely.
+> **Security:** the socket grants root-equivalent control of the host Docker daemon — the same trade-off as Portainer, Watchtower, or Dockge. Leave it unmounted to disable Docker-managed operation entirely.
 
 ---
 
@@ -169,10 +180,10 @@ Almost always a URL or network reachability issue:
 Some forks/variants name their database differently — e.g. hotio's **Whisparr v2** uses `whisparr2.db` instead of `whisparr.db`. Set the DB name in the **Database path** field on the Connection panel (or the DB-path field when adding an instance): enter just the filename (`whisparr2.db` — resolved next to the auto-detected DB) or a full container path (`/appdata/whisparr/whisparr2.db`). Click **Save Credentials** to persist it for scheduled runs and restore.
 
 ### "apikey is required (request body or env)" when a schedule runs
-The dashboard's API Key field was form-only state before v1.1.1. Fix: enter the key, click **Save Credentials**, then **Run now** on the schedule — it'll be persisted to `.starr-instance-overrides.json` so future scheduled runs find it.
+The key wasn't persisted. Enter it, click **Save Credentials**, then **Run now** — it's written to `.starr-instance-overrides.json` so future scheduled runs find it.
 
-### Stop didn't kill a long VACUUM in older versions
-Pre-v1.1.0 Stop only set an abort flag checked between ops. From v1.1.0 onward Stop calls `Connection.interrupt()` and aborts the in-flight statement in milliseconds.
+### "Not enough free space" / "Skipping VACUUM"
+Starr checks free space before writing. A backup needs room for a worst-case uncompressed copy of the DB; VACUUM additionally needs about the database's size again next to it, because it rebuilds into a temporary copy. Free some space (or delete old backups) and re-run — the message reports what was needed versus available.
 
 ### Backup "Permission denied"
 The entrypoint chowns `/backups` to `PUID:PGID` on every start, so this is rare. If you hit it once, ensure `PUID`/`PGID` match the owner of `/mnt/user/appdata/starr/backups` (or `chown -R PUID:PGID …` once). `/appdata` is **not** chowned — it's owned by the *arr apps.
@@ -181,14 +192,16 @@ The entrypoint chowns `/backups` to `PUID:PGID` on every start, so this is rare.
 
 ## 🔧 Repair Operations
 
-| Operation | Safe? | Description |
-|---|---|---|
-| **Integrity Check** | ✅ | `PRAGMA integrity_check` — full page-level scan for corruption |
-| **Foreign Keys** | ✅ | `PRAGMA foreign_key_check` — find and remove orphaned FK rows |
-| **WAL Checkpoint** | ✅ | `PRAGMA wal_checkpoint(TRUNCATE)` — flush write-ahead log into the main file |
-| **VACUUM** | ✅ | Defragments the database and reclaims free pages |
-| **REINDEX** | ✅ | Drops and rebuilds every index from scratch |
-| **ANALYZE** | ✅ | Updates query-planner statistics |
+All six run only against the idle database, after a successful backup — the "Safe" preset in the dashboard selects all of them.
+
+| Operation | Description |
+|---|---|
+| **Integrity Check** | `PRAGMA integrity_check` — full page-level scan for corruption |
+| **Foreign Keys** | `PRAGMA foreign_key_check` — find and remove orphaned FK rows |
+| **WAL Checkpoint** | `PRAGMA wal_checkpoint(TRUNCATE)` — flush the write-ahead log into the main file |
+| **VACUUM** | Defragment and reclaim free pages (rebuilds via a temporary copy) |
+| **REINDEX** | Drop and rebuild every index |
+| **ANALYZE** | Refresh query-planner statistics |
 
 ---
 
@@ -359,7 +372,7 @@ Starr/
 ├── docker-compose.yml
 ├── .env.example
 ├── ca_profile.xml           # Unraid Community Apps maintainer profile
-├── PUBLISHING.md            # First-time Docker Hub + GitHub publishing setup
+├── PUBLISHING.md            # Release process + image tagging policy
 ├── CHANGELOG.md
 ├── LICENSE
 └── README.md
@@ -369,14 +382,13 @@ Starr/
 
 ## 🔐 Security Notes
 
-- The container runs as **non-root** — `PUID:PGID` (entrypoint drops via gosu).
-- The Web UI is protected by `SECRET_KEY`. The shipped compose/`.env` defaults are the exact insecure-default sentinel (`change-me-in-production`), so an unconfigured install fails **loud** — unauthenticated, with a warning logged on every request and an "insecure" banner in the dashboard — rather than silently authenticating against a value published in this repo. Always set a strong random value on a shared network.
-- The API-key check uses a constant-time comparison (`hmac.compare_digest`), so it doesn't leak how many leading characters of the key matched via response timing.
-- API keys saved via the UI's **Save Credentials** button are persisted server-side to `/backups/.starr-instance-overrides.json` and are masked in the form.
-- API keys are never echoed in the response body for `/api/repair/status` or the SSE stream.
-- Place behind a reverse proxy with extra auth (Authelia, Authentik, nginx basic auth) if exposed beyond your LAN.
-- Mounting `/var/run/docker.sock` is **opt-in** but is root-equivalent control of the host Docker daemon — leave it unmounted to disable Docker-managed operation.
-- Published images are **signed with cosign** (keyless / Sigstore) on every release — verify with `cosign verify`.
+- The container runs **non-root** — the entrypoint drops to `PUID:PGID` via gosu.
+- **Set a real `SECRET_KEY`.** The shipped compose/`.env` value is the insecure-default sentinel (`change-me-in-production`), so an unconfigured install fails *loud* — unauthenticated, warned on every request, with a banner in the dashboard — rather than silently authenticating against a value published in this repo.
+- The API-key check is constant-time (`hmac.compare_digest`), so response timing doesn't leak how much of the key matched.
+- API keys are masked in the form, stored server-side in `/backups/.starr-instance-overrides.json`, and never echoed by `/api/repair/status` or the SSE stream.
+- Mounting `/var/run/docker.sock` is opt-in and grants root-equivalent control of the host Docker daemon.
+- Put it behind a reverse proxy with real auth (Authelia, Authentik, nginx basic auth) if it's reachable beyond your LAN.
+- Images are **cosign-signed** (keyless / Sigstore) on every release — verify with `cosign verify`.
 
 ---
 
