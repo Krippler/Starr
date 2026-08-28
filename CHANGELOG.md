@@ -1,7 +1,7 @@
 # Changelog
 
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
-Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
+Images are published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
 ## [Unreleased]
 
@@ -15,257 +15,160 @@ Image tags published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/kripp
 ## [1.3.7] — 2026-08-26
 
 ### Fixed
-- **An interrupted run could leave your *arr container stopped.** `_step_restart` was only reached on explicit success/guard paths — the repair and restore workers' generic `except Exception` returned without it, so an unexpected error after shutdown left the app down with nothing to bring it back. The restart now runs from a `finally` in both workers (guarded so the normal path can't double-start).
-- **Starr dying mid-repair left the app stopped with no recovery.** Every `docker stop` is now journalled to `/backups/.starr-stopped.json` and cleared on restart; at boot Starr starts anything a previous process stopped but never restarted (OOM kill, container update, host reboot). Containers already running again are left alone, and the marker is kept for a later retry if the Docker socket isn't reachable.
+- **An interrupted run could leave your *arr container stopped** — the restart step was only reached on explicit success/guard paths, so an unexpected error after shutdown left the app down with nothing to bring it back. Both the repair and restore workers now restart from a `finally`, guarded so the normal path can't double-start.
+- **Starr dying mid-repair left the app stopped with no recovery** — every `docker stop` is now journalled to `/backups/.starr-stopped.json` and cleared on restart. At boot, Starr starts anything a previous process stopped but never restarted (OOM kill, container update, host reboot). Containers already running are left alone, and the marker is kept for a later retry if the Docker socket isn't reachable.
 
 ### Added
-- **Disk-space preflight.** There were no free-space checks anywhere: a backup could half-write and VACUUM could fail mid-rebuild — on Unraid that usually means filling the cache pool that also holds `docker.img` and appdata.
-  - Backups now refuse to start unless the destination has room for a worst-case (incompressible) copy plus margin, reporting what's needed vs available.
-  - VACUUM is skipped with a clear message when the database's filesystem can't fit the transient full copy it builds; the remaining operations still run.
+- **Disk-space preflight** — there were no free-space checks at all, so a backup could half-write and VACUUM could fail mid-rebuild; on Unraid that usually means filling the cache pool that also holds `docker.img` and appdata. Backups now refuse to start without room for a worst-case (incompressible) copy plus margin, and VACUUM is skipped with a clear message when its transient full copy wouldn't fit — the remaining operations still run.
 
 ## [1.3.6] — 2026-07-17
 
 ### Fixed
-- **The rightmost dashboard column still couldn't be dragged** — cards in the right column of a two-column layout couldn't be moved to create a third column or into the first column (only after seeding a third column from the left did the middle column become movable). Root cause: native HTML5 drag-and-drop — adding the ＋ rail on dragstart reflowed the columns and the browser's drag hit-testing broke dragging out of the rightmost column. Rearranging is now driven by **pointer events with a floating clone** and purely coordinate-based routing, so every column behaves identically. Verified by driving a real mouse in a headless browser (right-column → new third column, right-column → first column, and in-column reorder all work).
+- **The rightmost dashboard column couldn't be dragged** — cards there couldn't move to a new column or the first column until a third column was seeded from the left. Native HTML5 drag-and-drop was the cause: adding the ＋ rail on `dragstart` reflowed the columns and broke the browser's drag hit-testing. Rearranging now uses pointer events with a floating clone and coordinate-based routing, so every column behaves identically.
 
 ## [1.3.5] — 2026-07-17
 
 ### Fixed
-- **Dragging a card into an adjacent column or the new-column rail was unreliable** — the drag used a per-column dragover handler, so you had to land the cursor precisely inside a thin column/rail and the flex gaps between columns were dead zones. In a two-column layout, a card from the right column often couldn't be dropped into the far-right "＋" rail to create a third column. Drag routing now uses a single dashboard-level handler that tiles the full width into column bands (a column owns everything up to its right edge; the rightmost owns everything beyond), so the whole dashboard is a reliable drop surface with no dead gaps.
+- **Dropping into an adjacent column or the new-column rail was unreliable** — a per-column `dragover` handler meant you had to land the cursor precisely inside a thin target, and the gaps between columns were dead zones. Drag routing now uses one dashboard-level handler that tiles the full width into column bands.
 
 ## [1.3.4] — 2026-07-17
 
 ### Fixed
-- **Couldn't drag a card into a shorter column** — dashboard columns were only as tall as their content, so the empty space beneath a short column (e.g. one with a single card) wasn't part of any column and rejected drops. With two columns of very different heights this made cards from the tall column impossible to move into the short one. Columns now stretch to the full dashboard height, so their entire width is a valid drop target. The while-dragging "＋" drop-rail for creating a new column was also widened (48→60px) for easier targeting.
+- **Couldn't drag a card into a shorter column** — columns were only as tall as their content, so the empty space beneath a short column rejected drops. Columns now stretch to full dashboard height, and the ＋ drop-rail was widened (48→60px).
 
 ## [1.3.3] — 2026-07-17
 
 ### Added
-- **Grow/shrink dashboard columns by dragging — no Reset needed** — while you drag a card, any empty column now shows as a dashed **＋ drop-rail**, so you can pull a card into empty space to spin a column back up (1 → 2 → 3, capped by the screen width). Dropping a card into a rail expands it into a full column; emptying a column collapses it again. Previously, once a column collapsed (1.3.2) the only way back to more columns was **Reset layout**.
+- **Grow/shrink dashboard columns by dragging** — while dragging, empty columns show as a dashed **＋ drop-rail**, so you can pull a card into empty space to spin a column back up (1 → 2 → 3, capped by screen width). Previously the only way back was **Reset layout**.
 
 ## [1.3.2] — 2026-07-17
 
 ### Fixed
-- **Empty dashboard columns left dead space** — after dragging every card out of a column (e.g. consolidating a 3-column layout down to 2), the now-empty column still reserved its share of the width, leaving a blank gap on wide screens. Empty columns now collapse so the populated columns expand to fill the page. (Reset layout restores the default multi-column spread.)
+- **Empty dashboard columns left dead space** — an emptied column still reserved its share of the width. Empty columns now collapse so the populated ones fill the page.
 
 ## [1.3.1] — 2026-07-17
 
 ### Fixed
-- **Dashboard panel titles were pushed to the centre of their headers** — the drag grip added in 1.3.0 was injected as a flex child of each panel header, and with `justify-content: space-between` that turned every header into three items, centering the title (Connection, Repair Operations, etc.) instead of left-aligning it. The grip is now absolutely positioned in a small reserved gutter, out of the flex flow, so headers lay out exactly as before 1.3.0 with the grip appearing on hover.
+- **Panel titles were pushed to the centre of their headers** — the 1.3.0 drag grip became a third flex child under `justify-content: space-between`. It's now absolutely positioned in a reserved gutter, out of the flex flow.
 
 ## [1.3.0] — 2026-07-16
 
 ### Added
-- **Rearrangeable dashboard** — the main panels (Connection, Repair Log, Operations, Trends, Backups, Schedules, Notifications) are now drag-to-rearrange cards. Hover a panel header to reveal a grip handle and drag it to reorder or move it between columns. On wide screens the panels flow into 2–3 responsive columns (single column on narrow/mobile, identical to before); each width remembers its own arrangement, saved per-browser in `localStorage` (same mechanism as the existing panel collapse-state). A **Reset layout** button restores the default. The live run status (shutdown warning, progress bar, result tiles) stays in a fixed strip above the grid so it never moves mid-repair. Purely a frontend enhancement — no API or backend changes.
+- **Rearrangeable dashboard** — the main panels are drag-to-rearrange cards. Hover a header for the grip, then reorder or move between columns; wide screens flow into 2–3 columns (narrow/mobile unchanged), each width remembering its own arrangement in `localStorage`. **Reset layout** restores the default. Live run status stays in a fixed strip above the grid so it never moves mid-repair. Frontend only — no API changes.
 
 ## [1.2.10] — 2026-07-16
 
 ### Fixed
-- **Docker client socket/fd leak** — every Docker operation (`docker stop`/`start` around a repair, and each auto-discovery scan) opened a docker-py client but never closed it, leaking a `requests` session + a socket to `/var/run/docker.sock` each time. Discovery now runs on every scheduled-repair preflight, so on a long-lived container these accumulated until the process could hit its open-file limit. All clients are now closed after use (repair shutdown/restart, `discover()`, `_self_appdata_root()`, and the container-lookup failure path).
-- **Leaked SQLite connection on an unexpected repair error** — `_step_repair` only closed its connection on the normal path; a non-`sqlite3` error escaping the op loop (e.g. an `OSError` while stat-ing the file during VACUUM) abandoned an open connection still holding a WAL/exclusive lock on the app's live database. Connection cleanup (rollback + close + clearing `active_conn`) now runs in a `finally`.
-- **Notifications could hang the repair worker forever** — Apprise's `notify()` takes no timeout and many of its plugins fall back to `requests` with no timeout, so a black-holed target would block the worker thread (and its fd) indefinitely, since notifications run inline at the end of every run. Apprise sends are now bounded by a watchdog (`APPRISE_TIMEOUT_SECONDS`, default 30s); a timeout is reported as an error and the worker proceeds. Signal and webhook sends already had timeouts.
-- **Stale credential overrides on instance delete** — deleting a named instance left its saved apikey/url/db_path override on disk, growing the overrides file over add/delete cycles and keeping stale credentials around. `delete()` now removes the matching override.
+- **Docker client socket/fd leak** — every Docker operation opened a docker-py client without closing it, leaking a `requests` session and a socket each time. Since discovery runs on every scheduled-repair preflight, these accumulated toward the process's open-file limit. All clients are now closed after use.
+- **Leaked SQLite connection on an unexpected repair error** — a non-`sqlite3` error escaping the op loop abandoned an open connection still holding a WAL/exclusive lock on the live database. Cleanup now runs in a `finally`.
+- **Notifications could hang the repair worker forever** — Apprise's `notify()` takes no timeout and many plugins fall back to `requests` without one, so a black-holed target blocked the worker indefinitely. Sends are now bounded by `APPRISE_TIMEOUT_SECONDS` (default 30s).
+- **Stale credential overrides on instance delete** — deleting a named instance left its saved apikey/url/db_path override on disk. `delete()` now removes it.
 
 ## [1.2.9] — 2026-07-13
 
-Supersedes 1.2.8. The `v1.2.8` tag was cut from `main` moments before this
-fix was merged, so the published `1.2.8`/`latest` images were built from the
-1.2.7 code and did **not** contain the fix below; 1.2.9 ships it.
+Supersedes 1.2.8, whose tag was cut moments before this fix merged — the published `1.2.8`/`latest` images were built from 1.2.7 code and lacked the fix below.
 
 ### Fixed
-- **Scheduled repairs now self-heal a stale container IP instead of failing until you click "Detect"** — a scheduled run resolves the *arr's address from the Docker discovery cache, and if the container had been recreated (Docker reassigns its bridge IP) the run could fail preflight with `Cannot reach <app> at http://<stale-ip>:<port>`; it only started working again after visiting the app page / hitting **Detect** forced a fresh scan. Preflight now detects a first-try connection miss, forces a fresh Docker scan, re-resolves the address, and retries once at the current IP — no manual step. Respects explicit `url` / `*_URL` overrides (never rescans over a pinned address) and only retries when the re-scanned address actually changed. Discovery's own Docker client timeout was also raised from 10s to 30s (matching the repair client) so a busy daemon doesn't falsely report Docker as unavailable and strand the cache on a stale IP.
+- **Scheduled repairs self-heal a stale container IP** — if a container was recreated, Docker reassigned its bridge IP and scheduled runs failed preflight until you clicked **Detect**. Preflight now detects a first-try connection miss, forces a fresh scan, and retries once at the current address. Explicit `url` / `*_URL` overrides are never rescanned over. Discovery's Docker timeout also rose from 10s to 30s so a busy daemon doesn't strand the cache.
 
 ## [1.2.7] — 2026-07-13
 
-Supersedes 1.2.6. An earlier `v1.2.6` tag was created from an incomplete
-commit and shipped only the first of the two fixes below; 1.2.7 delivers both.
+Supersedes 1.2.6, whose tag was created from an incomplete commit and shipped only the first fix below.
 
 ### Fixed
-- **`docker stop` read-timeouts no longer abort a repair** — the Docker client used a 10s HTTP timeout, and docker-py sets a stop's read timeout to `client_timeout + stop_grace` (10 + 30 = 40s), so a slow/busy daemon that took longer than 40s to stop a container surfaced as `docker stop failed: … Read timed out` and killed the repair — even though the daemon *was* stopping the container. The client timeout is now 30s (→ 60s of stop headroom), and a stop read-timeout is treated as "maybe still stopping": Starr polls the app for up to 60s and proceeds once it's actually offline, only failing if it stays up. Genuine (non-timeout) stop errors still fail fast.
-- **Repairs now re-scan Docker for the container's current bridge IP** — the discovery cache (which holds each *arr's bridge IP) was only refreshed at startup and on the "Detect" button, so if a container was recreated (Docker reassigns its IP) a repair kept hitting the old address and failed with `Cannot reach <app> at http://<stale-ip>:<port>`. `_resolve_request_cfg` (manual + scheduled repairs) and `_resolve_conn_lenient` (restore) now rescan right before resolving the connection, so the current IP is always used. The rescan is gated on Docker actually being in use, is resilient to a transient scan failure (keeps the last-known-good cache), and adds no latency to non-socket setups.
+- **`docker stop` read-timeouts no longer abort a repair** — docker-py sets a stop's read timeout to `client_timeout + stop_grace` (was 10 + 30 = 40s), so a busy daemon surfaced as `docker stop failed: … Read timed out` even while it *was* stopping the container. The client timeout is now 30s (60s of headroom), and a stop read-timeout is treated as "maybe still stopping": Starr polls for up to 60s and proceeds once the app is actually offline. Genuine stop errors still fail fast.
+- **Repairs re-scan Docker for the container's current bridge IP** — the discovery cache was only refreshed at startup and via **Detect**, so a recreated container left repairs hitting the old address. Manual, scheduled, and restore paths now rescan before resolving the connection.
 
 ## [1.2.5] — 2026-07-09
 
 ### Changed
-- **Added an "as-is, no warranty / use at your own risk" disclaimer** to the top of the README, the Unraid template `<Overview>`, and `ca_profile.xml` — noting the tool has been reliable in testing but the authors accept no responsibility for data loss or database damage, and users should keep their own backups.
-- **Health-check probes no longer flood the access log** — the container's Docker HEALTHCHECK hits `GET /healthz` every 30s; a small `gunicorn.conf.py` log filter now drops `/healthz` and `/readyz` access-log lines while every real request is still logged (the health check itself is unchanged — this only affects logging).
+- **Added an "as-is, no warranty" disclaimer** to the README, the Unraid template `<Overview>`, and `ca_profile.xml`.
+- **Health-check probes no longer flood the access log** — a `gunicorn.conf.py` filter drops `/healthz` and `/readyz` access-log lines; every real request is still logged.
 
 ## [1.2.4] — 2026-07-05
 
-Patch release: polish for the Database path field shipped in 1.2.3.
-
 ### Changed
-- **Database path field is now app-aware and more concise** ([#65](https://github.com/Krippler/Starr/pull/65)) — the hint and placeholder reflect the *selected* app's default DB filename (`sonarr.db` on Sonarr, `radarr.db` on Radarr, …) instead of always citing Whisparr; the `whisparr2.db` example now only appears on the Whisparr tab. Copy trimmed to a one-liner, and on wide screens the field flows onto the same row as URL + API Key (wrapping gracefully as the window narrows).
+- **Database path field is app-aware** ([#65](https://github.com/Krippler/Starr/pull/65)) — the hint and placeholder now reflect the selected app's default DB filename instead of always citing Whisparr, and the field shares a row with URL + API Key on wide screens.
 
 ## [1.2.3] — 2026-07-05
 
 ### Added
-- **Custom database name / path override** ([#62](https://github.com/Krippler/Starr/issues/62)) — a new **Database path** field on the Connection panel (and the add-instance form) lets you point Starr at a non-standard DB name, e.g. hotio's Whisparr v2 uses `whisparr2.db` instead of `whisparr.db`. Accepts a bare filename (resolved next to the auto-detected DB) or a full container path; persists per-instance via **Save Credentials** and is honoured by manual runs, scheduled runs, and restore. New `db_path_override` field on `/api/instances`.
+- **Custom database name / path override** ([#62](https://github.com/Krippler/Starr/issues/62)) — a **Database path** field for non-standard DB names (e.g. hotio's Whisparr v2 uses `whisparr2.db`). Accepts a bare filename or a full container path, persists per instance, and is honoured by manual runs, scheduled runs, and restore. Adds `db_path_override` to `/api/instances`.
 
 ### Changed
-- **Unraid Community Applications readiness** — the template (`templates/unraid.xml`) is now ready to submit to [CA](https://ca.unraid.net/):
-  - Added a template **`<Icon>`** (`templates/starr-icon.png`, a 256×256 PNG) — CA rejects templates without one.
-  - Added `<Beta>False</Beta>`.
-  - The **Docker socket mount is now optional** (`Required="false"`) instead of mandatory, with a description that spells out the root-equivalent trade-off and the shutdown-API fallback — CA moderators scrutinise forced `docker.sock` mounts, and the app works without it.
-  - `SECRET_KEY` description rewritten to match the app's actual security behaviour (unset ⇒ unauthenticated + insecure banner).
+- **Unraid Community Applications readiness** — added a template `<Icon>` (CA rejects templates without one) and `<Beta>False</Beta>`; made the Docker socket mount optional (`Required="false"`) with the root-equivalent trade-off spelled out; rewrote the `SECRET_KEY` description to match actual behaviour.
 
 ## [1.2.2] — 2026-07-01
 
-Patch release: a dashboard density pass.
-
 ### Changed
-- **Dashboard density pass** — action buttons now live in the panel bar they belong to instead of a separate row below the panel, matching the "Add Schedule" pattern already used by Scheduled Repairs:
-  - **Run Repair** / **Stop** move into the Repair Operations bar (next to the Dry Run / Skip Shutdown toggles); the last-run pill moves there too.
-  - **Refresh Backups** moves into the Backups bar (next to "Stored in /backups").
-  - **Detect *arr containers** / **Save Credentials** / **Test Connection** move into the Connection bar (next to the connection-status text).
-  - The now-empty standalone action row between Repair Operations and Trends is removed.
-  - **URL** and **API Key** sit side-by-side on wide viewports instead of stacking full-width (existing `600px` breakpoint still stacks them on narrow screens).
+- **Dashboard density pass** — action buttons moved into the panel bar they belong to: **Run Repair**/**Stop** and the last-run pill into Repair Operations, **Refresh Backups** into Backups, and **Detect**/**Save Credentials**/**Test Connection** into Connection. The standalone action row is gone, and URL + API Key sit side-by-side on wide viewports.
 
 ## [1.2.1] — 2026-07-01
 
-Patch release: a shipped-defaults security fix, plus the release-automation
-work that lets this very release publish itself.
-
 ### Security
-- **Shipped `SECRET_KEY` defaults now match the app's "insecure default" sentinel** — `docker-compose.yml` and `.env.example` previously defaulted to `change-me` / `change-me-to-a-random-string`, which are *different* strings from the one `server.py` checks for (`change-me-in-production`). That meant an out-of-the-box `docker compose up` with no `.env` edits was silently **authenticating every request against a value published in this repo**, with no warning and no "insecure" banner in the dashboard (both only fire when the key equals the exact sentinel). Both files now default to the sentinel, so an unset key is loud and visible instead of quietly insecure.
-- **API-key comparison is now constant-time** (`hmac.compare_digest`) instead of `!=`, closing a minor timing side-channel in `require_api_key`.
+- **Shipped `SECRET_KEY` defaults now match the insecure-default sentinel** — `docker-compose.yml` and `.env.example` defaulted to `change-me` / `change-me-to-a-random-string`, which are *different* strings from the one `server.py` checks for. An out-of-the-box `docker compose up` was therefore silently authenticating every request against a value published in this repo, with no warning and no banner. Both files now ship the sentinel, so an unset key is loud and visible.
+- **API-key comparison is constant-time** (`hmac.compare_digest`), closing a timing side-channel.
 
 ### Changed
-- **Releases are now fully automatic** — merging a release PR (one that flips `CHANGELOG.md`'s `[Unreleased]` section to `[X.Y.Z]`) is enough. CI detects the version flip, publishes the version pins (`X.Y.Z` / `X.Y` / `X`), moves **`latest`** to that release, auto-creates the `vX.Y.Z` git tag, and creates the matching GitHub Release — all in the same workflow run. Manually pushing a `v*.*.*` tag still works (useful for re-running the release pipeline). (`.github/workflows/docker-publish.yml`)
+- **Releases are now fully automatic** — merging a release PR publishes the version pins, moves `latest`, creates the `vX.Y.Z` tag, and creates the GitHub Release in one workflow run. Manual tag pushes still work.
 
 ### Upgrade note
-If your `.env` (or compose override) still has `SECRET_KEY` unset or set to the
-old shipped default (`change-me` / `change-me-to-a-random-string`), set it to
-a real random value now — e.g. `openssl rand -hex 32`. Those old values are
-**not** treated as "insecure default" by the app, so requests against them
-were being silently authenticated.
+If your `.env` still has `SECRET_KEY` unset or set to an old shipped default (`change-me` / `change-me-to-a-random-string`), set a real random value now — e.g. `openssl rand -hex 32`. Those old values are **not** treated as insecure defaults, so requests against them were being silently authenticated.
 
 ## [1.2.0] — 2026-06-24
 
-UX rework — the dashboard is much calmer at rest, with secondary panels
-collapsed by default and controls grouped where they're actually used.
-Plus a release-automation rework so `latest` finally means "newest
-release" and every tag auto-creates a GitHub Release.
+UX rework — a calmer dashboard at rest, plus release automation so `latest` means "newest release".
 
 ### Added
-- **`edge` image tag** (#47) — every push to `main` publishes
-  `krippler52/starr:edge` and `ghcr.io/krippler/starr:edge`, so testing
-  the tip of `main` ahead of a release no longer means building locally.
+- **`edge` image tag** (#47) — every push to `main` publishes `krippler52/starr:edge` and `ghcr.io/krippler/starr:edge` for testing ahead of a release.
 
 ### Changed
-- **`latest` tag now tracks the newest released version, not every commit**
-  (#47) — only `v*.*.*` tag pushes move `latest`. Merges to `main` update
-  `edge` instead. Each version tag also **auto-creates a GitHub Release**
-  with notes pulled from this changelog. (`.github/workflows/docker-publish.yml`)
-- **Dashboard de-clutter** (#48) — Trends, Backups, Schedules, and
-  Notifications panels are collapsible (collapsed by default, state saved
-  per browser). The 1→6 phase indicator only renders during a repair. The
-  shutdown warning collapses to a single muted line at rest and only blows
-  up to the loud orange treatment when Skip Shutdown is checked or no
-  container was discovered. Lazy-load: collapsed sections fetch on first
-  expand instead of at unlock.
-- **Repair Operations panel** (#51) — collapsible, moved to sit directly
-  above the Run Repair button so "pick your ops" lives next to "run". The
-  Dry Run + Skip Shutdown toggles stay in the panel header for one-click
-  access; a small `"3 selected"` chip in the title shows current state at
-  a glance.
-- **Backup retention controls** (#49) consolidated into a single **Retention**
-  card at the top of the Backups panel. Two clearly-labelled columns:
-  *Default for all instances* and *This instance: <name>* — with plain-English
-  source captions (`Saved here` / `From MAX_BACKUP_AGE_DAYS env var`;
-  `Using default (X days)` / `Overrides the default`). No more split between
-  panel header and a vague "current instance" row.
-- **Lock button** (#50) moved out of the Connection panel's action row up to
-  the header next to the status badge, where session controls belong.
+- **`latest` tracks the newest released version, not every commit** (#47) — only `v*.*.*` tag pushes move it; merges to `main` update `edge`. Each version tag also auto-creates a GitHub Release from this changelog.
+- **Dashboard de-clutter** (#48) — Trends, Backups, Schedules, and Notifications are collapsible (collapsed by default, state saved per browser). The phase indicator only renders during a repair, and the shutdown warning stays a muted line unless it matters. Collapsed sections fetch on first expand.
+- **Repair Operations panel** (#51) — collapsible and moved directly above Run Repair, with Dry Run + Skip Shutdown in the header and a `"3 selected"` chip.
+- **Backup retention controls** (#49) consolidated into one **Retention** card with two columns — *Default for all instances* and *This instance* — and plain-English source captions.
+- **Lock button** (#50) moved to the Connection header, next to the status badge.
 
 ### Fixed
-- **Last-run pill and trend charts** now correctly scope to the selected
-  instance instead of bleeding across named extras of the same app (#52).
-  Switching tabs (Sonarr → Radarr → …) reliably updates the pill; the
-  default tab no longer shows runs that actually came from a named extra
-  (e.g. `sonarr-4k`).
+- **Last-run pill and trend charts scope to the selected instance** (#52) instead of bleeding across named extras of the same app.
 
 ## [1.1.2] — 2026-06-24
 
-Adjustable backup retention — globally and per instance — plus a comprehensive
-docs and UI-label sweep.
-
 ### Added
-- **Adjustable backup retention from the dashboard** (#43) — picker in the Backups panel header with `7 / 14 / 30 / 60 / 90 / 180 / 365 / Forever`. New endpoints `GET` / `PUT /api/settings`. `MAX_BACKUP_AGE_DAYS` env var remains the boot fallback.
-- **Per-instance backup retention** (#44) — each instance can override the global retention. A daily-backed Sonarr can keep 14 days while a weekly Sonarr-4K keeps a year, without one prune window chopping the other's files. New endpoint `PUT /api/instances/<id>/retention` (`null` clears the override). `/api/instances` payload now includes `retention_days` (override) and `retention_effective_days` (what would actually apply).
+- **Adjustable backup retention from the dashboard** (#43) — `7 / 14 / 30 / 60 / 90 / 180 / 365 / Forever`, via new `GET`/`PUT /api/settings`. `MAX_BACKUP_AGE_DAYS` remains the boot fallback.
+- **Per-instance backup retention** (#44) — each instance can override the global value, so one prune window can't chop another's files. New `PUT /api/instances/<id>/retention` (`null` clears). `/api/instances` now returns `retention_days` and `retention_effective_days`.
 
 ### Changed
-- **README rewritten** (#45) to reflect everything shipped since the `/data/<app>` era — single `/appdata` mount + Docker auto-discovery, multi-instance, run history, trends, restore, mid-VACUUM cancel, notifications, retention, Save Credentials. Complete API reference grouped by area.
-- **UI labels and tooltips** (#45) tightened around the instance model, retention inheritance, and the Save Credentials affordance.
-- **Unraid template overview** (#45) updated with the full current feature set.
+- **README rewritten** (#45) for the single `/appdata` mount + auto-discovery era, with a complete API reference.
+- **UI labels and tooltips** (#45) tightened around instances, retention inheritance, and Save Credentials.
 
 ## [1.1.1] — 2026-06-22
 
-Patch release fixing credential handling for scheduled repairs.
-
 ### Fixed
-- **API keys typed in the dashboard now persist and reach scheduled runs**
-  (#40) — previously the API Key field was form-only state, so a schedule that
-  fired with no `*_APIKEY` env var set failed with `apikey is required`. The UI
-  now has a **Save Credentials** button that persists the URL + API Key per
-  instance to `.starr-instance-overrides.json`; both manual and scheduled runs
-  pick them up. New endpoint: `PUT /api/instances/<id>/credentials`.
-- **Default-instance schedules now read the saved override** (#41) — scheduled
-  runs targeting the env/discovery default carry an empty `instance_id`, and the
-  override lookup was skipped for them. It now falls back to the app name (the
-  default instance's id), so `Run now` succeeds after saving credentials.
-- **Schedule rows surface the failure reason** (#40) — when a schedule's last
-  status is `error`, the actual message is shown under the row instead of just
-  the word "error".
+- **API keys typed in the dashboard now persist and reach scheduled runs** (#40) — the API Key field was form-only state, so a schedule firing without a `*_APIKEY` env var failed with `apikey is required`. **Save Credentials** now persists URL + API Key per instance to `.starr-instance-overrides.json`. New `PUT /api/instances/<id>/credentials`.
+- **Default-instance schedules read the saved override** (#41) — those runs carry an empty `instance_id`, which skipped the override lookup; it now falls back to the app name.
+- **Schedule rows surface the failure reason** (#40) instead of just the word "error".
 
 ## [1.1.0] — 2026-06-21
 
-A large feature drop centred on **multiple instances per app** plus a new
-**run-history layer** that powers a last-run pill, pre-repair time estimate, and
-DB-size / repair-duration trend charts. Fully backwards-compatible: existing
-single-instance installs see no behaviour change without action.
+Multiple instances per app, plus a run-history layer powering the last-run pill, time estimate, and trend charts. Fully backwards-compatible.
 
 ### Added
-- **Multiple instances per app** (#36, #37) — manage more than one of the same
-  *arr (e.g. a second Sonarr at a different URL). Each app keeps its env /
-  Docker-discovery "default" instance; extras are added/edited/deleted from the
-  new instance selector under the app tabs. Backups, schedules, history, and
-  restore are all per-instance.
-  - New endpoints: `GET/POST /api/instances`, `PUT/DELETE /api/instances/<id>`.
-- **Run history store** (#32) — every completed repair is recorded to
-  `.starr-history.json` in `BACKUP_DIR` (rolling cap of 500). Drives:
-  - **Last-run pill** in the action row (latest result + how long ago).
-  - **Pre-repair time estimate** ("~2m, based on 4 runs"), computed from real
-    past runs (excludes skip-if-clean / errored / dry-run records).
-  - New endpoints: `GET /api/history`, `GET /api/history/estimate`.
-- **Trend charts** (#34) — two per-app/per-instance inline-SVG sparklines:
-  repair duration and database size over the last 30 runs.
-- **Instance-scoped history & trends** (#38) — named extras (e.g. `sonarr-4k`)
-  get their own pill, estimate, and charts; the default falls back to per-app
-  so pre-upgrade records still surface. `?instance=` query support added to
-  history endpoints.
-- **Webhook on completion** (#33) — fires a JSON POST to a configurable URL
-  alongside the existing Apprise + Signal notifications.
+- **Multiple instances per app** (#36, #37) — manage a second Sonarr etc. Each app keeps its env/discovery "default"; extras are managed from the instance selector. Backups, schedules, history, and restore are all per-instance. New `GET/POST /api/instances`, `PUT/DELETE /api/instances/<id>`.
+- **Run history store** (#32) — every completed repair is recorded to `.starr-history.json` (rolling cap of 500), driving the last-run pill and a pre-repair estimate ("~2m, based on 4 runs") computed from real past runs. New `GET /api/history`, `GET /api/history/estimate`.
+- **Trend charts** (#34) — inline-SVG sparklines for repair duration and database size over the last 30 runs.
+- **Instance-scoped history & trends** (#38) — named extras get their own pill, estimate, and charts; defaults fall back to per-app so pre-upgrade records still surface.
+- **Webhook on completion** (#33) — a JSON POST alongside the existing Apprise + Signal notifications.
 
 ### Changed
-- **Stop now actually cancels a mid-VACUUM / REINDEX** (#35) — the active SQLite
-  connection is published on the job state and `api_stop` calls
-  `Connection.interrupt()` from the request thread; verified to abort a real
-  783 MB VACUUM in ~9 ms. The cancelled op is recorded as `aborted` and its
-  backup is renamed `…_aborted.db[.zst]` instead of the previous misleading
-  `…_clean`. `api_stop` response includes `{"interrupted": bool}`.
+- **Stop actually cancels a mid-VACUUM / REINDEX** (#35) — the active connection is published on the job state and `api_stop` calls `Connection.interrupt()`; verified to abort a real 783 MB VACUUM in ~9 ms. The cancelled op is recorded as `aborted` and its backup renamed `…_aborted.db[.zst]` instead of the misleading `…_clean`.
 
 ### Fixed
-- **Scheduler accepts the newer *arr apps** (#33) — `VALID_APPS` had only
-  Sonarr / Radarr / Lidarr / Sportarr; schedules can now also be created for
-  Readarr, Prowlarr, Whisparr, and Bazarr.
+- **Scheduler accepts the newer *arr apps** (#33) — schedules can now also be created for Readarr, Prowlarr, Whisparr, and Bazarr.
 
 ### Notes
-- `.starr-instances.json` is created on demand alongside the existing
-  `.starr-schedules.json`, `.starr-notify.json`, and `.starr-history.json` in
-  `BACKUP_DIR` — no new mount points.
-- Records written by 1.0.x have no `instance` field; the history filter treats
-  them as belonging to the default instance so the upgrade is seamless.
+- `.starr-instances.json` is created on demand alongside the other state files in `BACKUP_DIR` — no new mounts.
+- Records written by 1.0.x have no `instance` field and are treated as belonging to the default instance.
 
 ## [1.0.4]
 
