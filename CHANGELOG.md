@@ -3,7 +3,7 @@
 All notable changes are documented here. Releases follow [SemVer](https://semver.org).
 Images are published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/krippler/starr`).
 
-## [Unreleased]
+## [1.3.8] — 2026-08-28
 
 ### Fixed
 - **Stored HTML-attribute injection via a saved instance URL** — instance URLs are stored with no charset validation, and the dashboard rendered them into `title="…"` with `escHtml`, which escapes `&`, `<` and `>` but *not* quotes. A URL containing a double quote broke out of the attribute and could add handlers that ran for anyone loading the dashboard. All attribute-position interpolations now use `escAttr` (which escapes quotes), including the instance id passed to an inline `onclick`. Requires the Web Key to exploit, so the practical risk was to anyone sharing a dashboard.
@@ -11,6 +11,7 @@ Images are published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/kripp
 ### Changed
 - **The six SQLite ops are declared once** — `STANDARD_OPS` existed for this, but the four original apps (Sonarr, Radarr, Lidarr, Sportarr) each still carried a verbatim inline copy, so an edit meant touching five places. All eight apps now reference the shared list. No visible change.
 - **Removed dead drag CSS** (`.drop-into`, `.drop-before`, `.drop-after`) orphaned by the 1.3.6 pointer-events rewrite, and moved the two schedule-row rules from a runtime `injectSchedCSS()` IIFE into the stylesheet.
+- **The drag grip matches its own instructions** — the dashboard hint read "drag a panel's ⠿ grip" while the handle actually rendered `⠳`. The handle is now `⠿`, the conventional six-dot grip.
 
 ## [1.3.7] — 2026-08-26
 

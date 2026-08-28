@@ -477,7 +477,7 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
       </div>
       <div>
         <h1 id="appTitle">STARR DB REPAIR</h1>
-        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.7</p>
+        <p id="appSub">Database Diagnostic &amp; Recovery — v1.3.8</p>
       </div>
     </div>
     <div class="header-right">
@@ -1287,7 +1287,7 @@ function _injectHandles() {
     const h = document.createElement('span');
     h.className = 'drag-handle';
     h.title = 'Drag to rearrange';
-    h.textContent = '⠳';                       // ⠳ braille grip
+    h.textContent = '⠿';                       // ⠿ braille grip (matches the layout hint)
     head.insertBefore(h, head.firstChild);
     h.addEventListener('pointerdown', e => _startDrag(e, card));
     card._handleWired = true;
@@ -1680,7 +1680,7 @@ function switchApp(app) {
 
   // Header text
   document.getElementById('appTitle').textContent = cfg.name + ' DB REPAIR';
-  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.7';
+  document.getElementById('appSub').textContent   = cfg.sub + ' — v1.3.8';
   document.getElementById('logoSvg').innerHTML    = cfg.icon;
   document.getElementById('termTitle').textContent = cfg.name + ' REPAIR LOG';
 
