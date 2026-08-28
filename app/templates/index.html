@@ -176,9 +176,6 @@ header {
   pointer-events: none; opacity: .92; border-radius: var(--radius);
   box-shadow: 0 14px 44px rgba(0,0,0,.55);
 }
-.dash-col.drop-into { outline: 2px dashed var(--app); outline-offset: -2px; border-radius: var(--radius); }
-.dash-card.drop-before { box-shadow: 0 -3px 0 -1px var(--app); }
-.dash-card.drop-after  { box-shadow: 0 3px 0 -1px var(--app); }
 #resetLayoutBtn { display: none; }
 #layoutTools.show #resetLayoutBtn { display: inline-flex; }
 #layoutTools { display: flex; justify-content: flex-end; gap: 8px; margin: -4px 0 10px; }
@@ -425,6 +422,13 @@ code { color: var(--app); font-family: 'JetBrains Mono', monospace; font-size: 1
   display: flex; gap: 12px; align-items: flex-start;
 }
 .sec-warn-box .warn-box-body strong { color: var(--err); }
+
+/* Scheduled Repairs rows */
+.sched-tag {
+  display: inline-block; background: rgba(176,136,255,.12); color: var(--dry);
+  border-radius: 3px; padding: 1px 6px; font-size: 9px; letter-spacing: .04em;
+}
+.sched-row:last-child { border-bottom: none; }
 </style>
 </head>
 <body>
@@ -916,53 +920,25 @@ const APPS = {
     name: 'SONARR', sub: 'TV Series Database Repair', color: '#00c8ff', port: 8989, api: 'v3',
     urlbasePlaceholder: '/sonarr',   dbPlaceholder: '/config/sonarr.db',
     icon: `<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>`,
-    ops: [
-      { id:'integrity',     name:'Integrity Check', icon:'🔍', desc:'PRAGMA integrity_check — full page scan.',   safe:true },
-      { id:'foreign_keys',  name:'Foreign Keys',    icon:'🔗', desc:'Find & remove orphaned FK rows.',            safe:true },
-      { id:'wal_checkpoint',name:'WAL Checkpoint',  icon:'💾', desc:'Flush write-ahead log to main DB file.',     safe:true },
-      { id:'vacuum',        name:'VACUUM',          icon:'🧹', desc:'Defragment and reclaim free pages.',         safe:true },
-      { id:'reindex',       name:'Reindex',         icon:'📑', desc:'Drop and rebuild every index from scratch.', safe:true },
-      { id:'analyze',       name:'ANALYZE',         icon:'📊', desc:'Refresh query-planner statistics.',          safe:true },
-    ]
+    ops: STANDARD_OPS,
   },
   radarr: {
     name: 'RADARR', sub: 'Movie Database Repair', color: '#ffd700', port: 7878, api: 'v3',
     urlbasePlaceholder: '/radarr',   dbPlaceholder: '/config/radarr.db',
     icon: `<path d="M7 4v16M17 4v16M3 8h4m10 0h4M3 16h4m10 0h4M7 8h10M7 16h10"/>`,
-    ops: [
-      { id:'integrity',     name:'Integrity Check', icon:'🔍', desc:'PRAGMA integrity_check — full page scan.',   safe:true },
-      { id:'foreign_keys',  name:'Foreign Keys',    icon:'🔗', desc:'Find & remove orphaned FK rows.',            safe:true },
-      { id:'wal_checkpoint',name:'WAL Checkpoint',  icon:'💾', desc:'Flush write-ahead log to main DB file.',     safe:true },
-      { id:'vacuum',        name:'VACUUM',          icon:'🧹', desc:'Defragment and reclaim free pages.',         safe:true },
-      { id:'reindex',       name:'Reindex',         icon:'📑', desc:'Drop and rebuild every index from scratch.', safe:true },
-      { id:'analyze',       name:'ANALYZE',         icon:'📊', desc:'Refresh query-planner statistics.',          safe:true },
-    ]
+    ops: STANDARD_OPS,
   },
   lidarr: {
     name: 'LIDARR', sub: 'Music Database Repair', color: '#1db954', port: 8686, api: 'v1',
     urlbasePlaceholder: '/lidarr',   dbPlaceholder: '/config/lidarr.db',
     icon: `<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>`,
-    ops: [
-      { id:'integrity',     name:'Integrity Check', icon:'🔍', desc:'PRAGMA integrity_check — full page scan.',   safe:true },
-      { id:'foreign_keys',  name:'Foreign Keys',    icon:'🔗', desc:'Find & remove orphaned FK rows.',            safe:true },
-      { id:'wal_checkpoint',name:'WAL Checkpoint',  icon:'💾', desc:'Flush write-ahead log to main DB file.',     safe:true },
-      { id:'vacuum',        name:'VACUUM',          icon:'🧹', desc:'Defragment and reclaim free pages.',         safe:true },
-      { id:'reindex',       name:'Reindex',         icon:'📑', desc:'Drop and rebuild every index from scratch.', safe:true },
-      { id:'analyze',       name:'ANALYZE',         icon:'📊', desc:'Refresh query-planner statistics.',          safe:true },
-    ]
+    ops: STANDARD_OPS,
   },
   sportarr: {
     name: 'SPORTARR', sub: 'Sports PVR Database Repair', color: '#ff6b35', port: 1867, api: 'v3',
     urlbasePlaceholder: '/sportarr', dbPlaceholder: '/config/sportarr.db',
     icon: `<circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><path d="M2 12h20"/>`,
-    ops: [
-      { id:'integrity',     name:'Integrity Check', icon:'🔍', desc:'PRAGMA integrity_check — full page scan.',   safe:true },
-      { id:'foreign_keys',  name:'Foreign Keys',    icon:'🔗', desc:'Find & remove orphaned FK rows.',            safe:true },
-      { id:'wal_checkpoint',name:'WAL Checkpoint',  icon:'💾', desc:'Flush write-ahead log to main DB file.',     safe:true },
-      { id:'vacuum',        name:'VACUUM',          icon:'🧹', desc:'Defragment and reclaim free pages.',         safe:true },
-      { id:'reindex',       name:'Reindex',         icon:'📑', desc:'Drop and rebuild every index from scratch.', safe:true },
-      { id:'analyze',       name:'ANALYZE',         icon:'📊', desc:'Refresh query-planner statistics.',          safe:true },
-    ]
+    ops: STANDARD_OPS,
   },
   readarr: {
     name: 'READARR', sub: 'Books Database Repair', color: '#ff5252', port: 8787, api: 'v1',
@@ -1602,7 +1578,7 @@ function renderInstanceSelector() {
       : `<span class="inst-x" title="Delete" onclick="event.stopPropagation();deleteInstance('${i.id}')">✕</span>`;
     const edit = i.default ? ''
       : `<span class="inst-x" title="Edit" onclick="event.stopPropagation();editInstance('${i.id}')">✎</span>`;
-    return `<span class="inst-chip${active}" onclick="selectInstance('${i.id}')" title="${escHtml(i.url||'')}">`
+    return `<span class="inst-chip${active}" onclick="selectInstance('${escAttr(i.id)}')" title="${escAttr(i.url||'')}">`
          + `${escHtml(i.name)} ${tag}${edit}${del}</span>`;
   }).join('');
   const add = `<button class="inst-add" onclick="openInstanceForm()">+ Add instance</button>`;
@@ -1791,7 +1767,7 @@ async function refreshRunMeta() {
     if (last) {
       const cls = ({ ok:'rm-ok', warning:'rm-warn', error:'rm-err', clean:'rm-clean' })[last.status] || '';
       const label = ({ ok:'clean', warning:'fixed issues', error:'failed', clean:'clean', aborted:'aborted', skipped:'skipped' })[last.status] || last.status;
-      parts.push(`<span title="${escHtml(last.elapsed || '')} · ${last.fixed||0} fixed, ${last.errors||0} errors">`
+      parts.push(`<span title="${escAttr(last.elapsed || '')} · ${last.fixed||0} fixed, ${last.errors||0} errors">`
         + `<span class="rm-dot ${cls}"></span>Last run: <strong>${escHtml(label)}</strong> ${fmtAgo(last.ts)}</span>`);
     } else {
       parts.push('<span><span class="rm-dot"></span>No prior runs</span>');
@@ -2196,6 +2172,12 @@ function clearLog() {
   while(body.firstChild!==cursor) body.removeChild(body.firstChild);
   lineCount=0; document.getElementById('lineCount').textContent='0 lines';
 }
+// Two escapers, and the distinction matters:
+//   escHtml — TEXT between tags. Does NOT escape quotes, so it is NOT safe
+//             inside an attribute.
+//   escAttr — anything inside a quoted attribute (title="…", value="…", and
+//             the string arguments of inline onclick="fn('…')" handlers).
+// When in doubt use escAttr: it is safe in both positions.
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 // Build an *arr API path. Most apps are versioned (/api/v3/...); Bazarr is
 // versionless (api === '') → /api/... . Mirrors _api_path() on the server.
@@ -2288,7 +2270,12 @@ async function restoreBackup(name) {
 }
 
 // Escape a value for safe use inside a single-quoted HTML attribute.
-function escAttr(s) { return String(s).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;'); }
+// Escapes quotes as well as angle brackets, so it is safe in both attribute
+// and text position. See the note on escHtml above.
+function escAttr(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/'/g,'&#39;').replace(/"/g,'&quot;')
+                  .replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
 
 // ── Schedules ────────────────────────────────────────────────────────────────
 const ALL_OPS = [
@@ -2347,7 +2334,7 @@ function syncSchedInstances(selectId) {
   const list = _instancesByApp[appName] || [];
   const extras = list.filter(i => !i.default);
   const opts = ['<option value="">Default</option>']
-    .concat(extras.map(i => `<option value="${escHtml(i.id)}">${escHtml(i.name)}</option>`));
+    .concat(extras.map(i => `<option value="${escAttr(i.id)}">${escHtml(i.name)}</option>`));
   sel.innerHTML = opts.join('');
   if (selectId !== undefined) sel.value = selectId || '';
 }
@@ -2554,16 +2541,6 @@ async function testNotify() {
   finally { btn.disabled = false; btn.textContent = old; }
 }
 
-// CSS rules added inline so we don't need to touch the <style> block
-(function injectSchedCSS() {
-  const css = `
-    .sched-tag { display:inline-block; background:rgba(176,136,255,.12); color:var(--dry); border-radius:3px; padding:1px 6px; font-size:9px; letter-spacing:.04em; }
-    .sched-row:last-child { border-bottom:none; }
-  `;
-  const s = document.createElement('style');
-  s.textContent = css;
-  document.head.appendChild(s);
-})();
 
 boot();
 </script>
