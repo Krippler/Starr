@@ -71,6 +71,13 @@ ENV PORT=8877 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
+# Build stamp, shown in the dashboard header and at startup. CI passes the
+# release version on a release build and `git describe` output otherwise (see
+# .github/workflows/docker-publish.yml); a local `docker build` says "dev".
+# Declared this late so changing it doesn't invalidate the layers above.
+ARG STARR_VERSION=dev
+ENV STARR_VERSION=${STARR_VERSION}
+
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Launch with gunicorn (1 worker, threaded for SSE).

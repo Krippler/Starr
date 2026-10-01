@@ -7,15 +7,29 @@ repo or run a fork — not needed to *use* Starr (see the [README](README.md)).
 
 ## Cutting a release
 
-Releases are fully automatic. Open a PR that:
+Releases are fully automatic. Open a PR that flips `CHANGELOG.md`'s
+`[Unreleased]` section to `[X.Y.Z] — YYYY-MM-DD`, and merge it. That's the whole
+release: there are no version strings to bump anywhere else.
 
-1. Flips `CHANGELOG.md`'s `[Unreleased]` section to `[X.Y.Z] — YYYY-MM-DD`
-2. Bumps the version banners in `app/server.py` and `app/templates/index.html`
-3. Bumps the image-tag pin in `README.md`
+CI detects the version flip and — in the same run — publishes the images, pushes
+the `vX.Y.Z` git tag, and creates the GitHub Release using that CHANGELOG
+section as the body. Nothing to push from your machine.
 
-Merge it. CI detects the version flip and — in the same run — publishes the
-images, pushes the `vX.Y.Z` git tag, and creates the GitHub Release using that
-CHANGELOG section as the body. Nothing to push from your machine.
+## Version stamp
+
+No version is written in the source. CI works it out at build time and bakes it
+into the image as `STARR_VERSION` (the same approach as
+[Krippler/Quake](https://github.com/Krippler/Quake)):
+
+| Build | Stamp | Shown as |
+|---|---|---|
+| Release-PR merge | the version from the CHANGELOG header | `v1.3.9` |
+| Any other build (`edge`, PRs) | `git describe --tags --always --dirty` | `v1.3.8-2-gabc1234` |
+| Local `docker build` / `python server.py` | — | `dev` |
+
+It appears in the dashboard header, the repair log's start line, and the
+container log at startup. So an `edge` image can never pass for the last
+release, and a bug report names the exact commit it came from.
 
 ## Tagging policy
 

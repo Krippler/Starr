@@ -123,6 +123,22 @@ jobs:
             type=raw,value=${{ steps.detect.outputs.major }},enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
             type=raw,value=latest,enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
 
+      # Stamped into the image as STARR_VERSION and shown in the dashboard
+      # header and at startup. A release build says its version; anything else
+      # says which commit it came from (`git describe`, e.g. v1.3.8-2-gabc1234),
+      # so an edge build never claims to be the last release. Same approach as
+      # Krippler/Quake. The server drops git's leading "v" so both read alike.
+      - name: Work out the build stamp
+        id: stamp
+        run: |
+          set -euo pipefail
+          VER="${{ steps.detect.outputs.version }}"
+          if [ -z "$VER" ]; then
+            VER="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+          fi
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "build stamp: ${VER}"
+
       - name: Build and push Docker image
         id: build-and-push
         uses: docker/build-push-action@0565240e2d4ab88bba5387d719585280857ece09 # v5.0.0
@@ -131,6 +147,8 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            STARR_VERSION=${{ steps.stamp.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

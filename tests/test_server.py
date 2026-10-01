@@ -2113,3 +2113,50 @@ def test_free_bytes_returns_number_for_real_path(tmp_path):
 def test_free_bytes_walks_up_to_existing_parent(tmp_path):
     """BACKUP_DIR may not exist yet on a first run — still get a real number."""
     assert isinstance(srv._free_bytes(tmp_path / "does" / "not" / "exist"), int)
+
+
+# ── Build stamp (STARR_VERSION) ──────────────────────────────────────────────
+@pytest.mark.parametrize("raw, clean, shown", [
+    ("1.3.9",               "1.3.9",              "v1.3.9"),             # release build
+    ("v1.3.8-2-gabc1234",   "1.3.8-2-gabc1234",   "v1.3.8-2-gabc1234"),  # edge: git describe
+    ("v1.3.8-dirty",        "1.3.8-dirty",        "v1.3.8-dirty"),
+    ("abc1234",             "abc1234",            "abc1234"),            # describe --always, no tags
+    ("1a2b3c4",             "1a2b3c4",            "1a2b3c4"),            # hash that starts with a digit
+    (None,                  "dev",                "dev"),                # local run
+    ("",                    "dev",                "dev"),
+    ("  1.3.9\n",           "1.3.9",              "v1.3.9"),
+])
+def test_version_stamp_normalised(raw, clean, shown):
+    assert srv._clean_version(raw) == clean
+    assert srv._display_version(clean) == shown
+
+
+def test_version_stamp_cannot_inject_markup():
+    """The stamp lands in HTML text and a JS string — narrow it to safe chars."""
+    v = srv._clean_version('1.3.9"><script>alert(1)</script>')
+    assert re.fullmatch(r"[A-Za-z0-9._+-]+", v), v
+
+
+def test_index_shows_the_build_stamp(client, monkeypatch):
+    monkeypatch.setattr(srv, "APP_VERSION_DISPLAY", "v9.8.7-3-gdeadbee")
+    html = client.get("/").get_data(as_text=True)
+    assert "Recovery — v9.8.7-3-gdeadbee</p>" in html          # header text
+    assert 'const APP_VERSION = "v9.8.7-3-gdeadbee";' in html   # JS, for app switching
+
+
+def test_template_has_no_hardcoded_version():
+    """A version written into the template is what made every edge build claim
+    to be the last release. It must come from the build stamp."""
+    src = open(os.path.join(os.path.dirname(__file__), "..", "app", "templates", "index.html"),
+               encoding="utf-8").read()
+    assert not re.search(r"\bv?\d+\.\d+\.\d+\b", src), "hardcoded version in index.html"
+
+
+def test_repair_log_banner_uses_build_stamp(monkeypatch):
+    monkeypatch.setattr(srv, "APP_VERSION_DISPLAY", "v9.8.7")
+    monkeypatch.setattr(srv, "_step_preflight", lambda cfg: None)   # stop right after the banner
+    monkeypatch.setattr(srv, "_record_history", lambda *a, **k: None)
+    monkeypatch.setattr(srv._notify, "maybe_notify", lambda *a, **k: None)
+    srv._job.reset()
+    srv._repair_worker({"app": "sonarr"})
+    assert any(h["msg"] == "Starr DB Repair v9.8.7 – job started for SONARR" for h in srv._job.history)

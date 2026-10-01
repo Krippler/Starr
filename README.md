@@ -74,7 +74,7 @@ docker run -d \
   -v /mnt/user/appdata:/appdata:rw \
   -v /mnt/user/appdata/starr/backups:/backups \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  krippler52/starr:1.3.8
+  krippler52/starr:latest
 ```
 
 **That's it for the host side.** Open the dashboard, paste each app's API key, click **Save Credentials**, and Starr remembers it for scheduled runs and reloads. URLs / DB paths / container names are auto-discovered from Docker.
@@ -83,10 +83,12 @@ docker run -d \
 
 | Tag | Use |
 |---|---|
-| `1.3.8` | exact version — recommended pin for production |
-| `1.3` / `1` | floating minor / major |
-| `latest` | newest **released version** (updated on every version tag) |
+| `latest` | newest **released version** |
+| `X.Y.Z` | a specific release, e.g. `1.3.8` — recommended pin for production ([releases](https://github.com/Krippler/Starr/releases)) |
+| `X.Y` / `X` | floating minor / major |
 | `edge` | tip of `main` — newest merged code, for testing ahead of a release |
+
+The running version is shown in the dashboard header and logged at startup. A release image says its version (`v1.3.8`); an `edge` image says which commit it was built from (`v1.3.8-2-gabc1234`).
 
 > Releases are automatic: merging a release PR publishes the images, tag, and GitHub Release in one CI run. See [PUBLISHING.md](PUBLISHING.md).
 
