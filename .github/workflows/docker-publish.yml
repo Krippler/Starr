@@ -73,6 +73,24 @@ jobs:
           echo "major=${MAJOR}"             >> "$GITHUB_OUTPUT"
           echo "major_minor=${MINOR_FULL}"  >> "$GITHUB_OUTPUT"
 
+      # The image's version, used for both the STARR_VERSION build-arg (shown in
+      # the dashboard header and at startup) and the OCI version label. A release
+      # build says its version; anything else says which commit it came from
+      # (`git describe`, e.g. 1.3.9-2-gabc1234), so an edge build never claims to
+      # be the last release. Same approach as Krippler/Quake. Git's leading "v"
+      # is dropped so a release and a describe stamp read alike.
+      - name: Work out the build stamp
+        id: stamp
+        run: |
+          set -euo pipefail
+          VER="${{ steps.detect.outputs.version }}"
+          if [ -z "$VER" ]; then
+            VER="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
+          fi
+          VER="${VER#v}"
+          echo "version=${VER}" >> "$GITHUB_OUTPUT"
+          echo "build stamp: ${VER}"
+
       - name: Install cosign
         if: github.event_name != 'pull_request'
         uses: sigstore/cosign-installer@59acb6260d9c0ba8f4a2f9d9b48431a222b68e20 # v3.5.0
@@ -122,22 +140,11 @@ jobs:
             type=raw,value=${{ steps.detect.outputs.major_minor }},enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
             type=raw,value=${{ steps.detect.outputs.major }},enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
             type=raw,value=latest,enable=${{ steps.detect.outputs.is_release_merge == 'true' }}
-
-      # Stamped into the image as STARR_VERSION and shown in the dashboard
-      # header and at startup. A release build says its version; anything else
-      # says which commit it came from (`git describe`, e.g. v1.3.8-2-gabc1234),
-      # so an edge build never claims to be the last release. Same approach as
-      # Krippler/Quake. The server drops git's leading "v" so both read alike.
-      - name: Work out the build stamp
-        id: stamp
-        run: |
-          set -euo pipefail
-          VER="${{ steps.detect.outputs.version }}"
-          if [ -z "$VER" ]; then
-            VER="$(git describe --tags --always --dirty 2>/dev/null || echo dev)"
-          fi
-          echo "version=${VER}" >> "$GITHUB_OUTPUT"
-          echo "build stamp: ${VER}"
+          # Without this, the version label is whichever tag sorts first —
+          # `edge` on a release-PR merge, so 1.3.8 and 1.3.9 were both
+          # labelled "edge". Custom labels override the generated ones.
+          labels: |
+            org.opencontainers.image.version=${{ steps.stamp.outputs.version }}
 
       - name: Build and push Docker image
         id: build-and-push

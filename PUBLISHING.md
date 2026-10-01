@@ -28,8 +28,9 @@ into the image as `STARR_VERSION` (the same approach as
 | Local `docker build` / `python server.py` | — | `dev` |
 
 It appears in the dashboard header, the repair log's start line, and the
-container log at startup. So an `edge` image can never pass for the last
-release, and a bug report names the exact commit it came from.
+container log at startup, and is also the image's
+`org.opencontainers.image.version` label. So an `edge` image can never pass for
+the last release, and a bug report names the exact commit it came from.
 
 ## Tagging policy
 
