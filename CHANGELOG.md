@@ -6,7 +6,7 @@ Images are published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/kripp
 The top section's heading is what the release workflow reads: `## [X.Y.Z] — DATE`
 on `main` publishes that version, `## [Unreleased]` publishes only `edge`.
 
-## [Unreleased]
+## [1.3.9] — 2026-10-01
 
 ### Changed
 - **The version is stamped at build time, not written in the source** — the same approach as Krippler/Quake. CI passes it into the image as `STARR_VERSION`: a release build carries the version from this file, and any other build carries `git describe` output naming its commit (e.g. `v1.3.8-2-gabc1234`). It shows in the dashboard header, the repair log's start line, and at startup. Previously `v1.3.8` was hardcoded in three places, so every `edge` build claimed to be the last release, and each release depended on remembering to bump them.
