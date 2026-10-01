@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import queue
+import re
 import shutil
 import sqlite3
 import threading
@@ -82,6 +83,28 @@ logging.getLogger().setLevel(app.config["LOG_LEVEL"])
 
 # Restrict CORS to configured origins only
 CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
+
+# Build stamp. CI passes it into the image as STARR_VERSION, the way Quake
+# does: a release build carries the version from CHANGELOG.md, anything else
+# carries `git describe` output naming the commit (1.3.8-2-gabc1234), and a
+# local run says "dev". Nothing in the source names a version, so a release
+# needs no banner bumps and an edge build can't claim to be the last release.
+def _clean_version(raw: str | None) -> str:
+    """Narrow the stamp to characters that are safe anywhere it is shown, and
+    drop git's leading "v" so release and describe stamps read the same."""
+    v = re.sub(r"[^A-Za-z0-9._+-]", "-", (raw or "").strip())
+    v = v[1:] if v[:1] == "v" and v[1:2].isdigit() else v
+    return v or "dev"
+
+
+def _display_version(v: str) -> str:
+    """'1.3.9' -> 'v1.3.9'; 'dev' and bare commit hashes are shown as-is."""
+    return f"v{v}" if re.match(r"\d+\.\d+", v) else v
+
+
+APP_VERSION = _clean_version(os.environ.get("STARR_VERSION"))
+APP_VERSION_DISPLAY = _display_version(APP_VERSION)
+log.info("Starr DB Repair %s", APP_VERSION_DISPLAY)
 
 APP_DEFAULTS = {
     # api: Sonarr/Radarr/Whisparr (and the Sonarr-fork Sportarr) speak
@@ -1059,7 +1082,7 @@ def _repair_worker(cfg: dict) -> None:
     _job.history    = []
     _job.result     = None
 
-    emit("SYS", f"Starr DB Repair v1.3.8 – job started for {cfg['app'].upper()}", "sys")
+    emit("SYS", f"Starr DB Repair {APP_VERSION_DISPLAY} – job started for {cfg['app'].upper()}", "sys")
     emit("SYS", f"Dry run: {cfg.get('dry_run', False)}", "sys")
 
     db_path = None
@@ -1346,7 +1369,8 @@ def _resolve_conn_lenient(cfg: dict) -> None:
 def index():
     # Pass whether a real SECRET_KEY has been configured so the UI can warn
     using_default_key = app.config["SECRET_KEY"] == "change-me-in-production"
-    return render_template("index.html", config=app.config, using_default_key=using_default_key)
+    return render_template("index.html", config=app.config, using_default_key=using_default_key,
+                           app_version=APP_VERSION_DISPLAY)
 
 
 @app.route("/healthz")
