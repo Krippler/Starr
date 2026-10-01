@@ -6,6 +6,11 @@ Images are published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/kripp
 The top section's heading is what the release workflow reads: `## [X.Y.Z] — DATE`
 on `main` publishes that version, `## [Unreleased]` publishes only `edge`.
 
+## [1.3.10] — 2026-10-01
+
+### Fixed
+- **Release images were labelled `edge`** — the `org.opencontainers.image.version` label (what `docker inspect`, Diun and Watchtower show) is taken from whichever image tag sorts first, and on a release-PR merge that was `edge`, so 1.3.8 and 1.3.9 were both labelled `edge`. The label is now set to the same build stamp the dashboard shows: the release version on a release, and the commit (`1.3.9-2-gabc1234`) on `edge`.
+
 ## [1.3.9] — 2026-10-01
 
 ### Changed
