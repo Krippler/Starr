@@ -115,7 +115,7 @@ The running version is shown in the dashboard header and logged at startup. A re
 | `PUID` | `99` (Unraid) / `1000` (compose) | UID the container runs as. Must own — or share a group with — your *arr config dirs. |
 | `PGID` | `100` (Unraid) / `1000` (compose) | GID the container runs as. |
 | `PORT` | `8877` | Web UI listen port. |
-| `SECRET_KEY` | _(required)_ | Web UI access key. Leave it at the shipped default (`change-me-in-production`, which `docker-compose.yml` and `.env.example` both use) and the dashboard runs **unauthenticated** — logging a warning on every request and showing an "insecure" banner in the UI. Set a strong random value (e.g. `openssl rand -hex 32`) to enforce the Web Key gate. |
+| `SECRET_KEY` | _(required)_ | Web UI access key. Leave it blank or at the shipped default (`change-me-in-production`, which `docker-compose.yml` and `.env.example` both use) and the dashboard runs **unauthenticated** — anyone who can reach the port gets in — logging a warning on every request and showing an "insecure" banner in the UI. Set a strong random value (e.g. `openssl rand -hex 32`) to enforce the Web Key gate. |
 | `LOG_LEVEL` | `INFO` | `DEBUG` `INFO` `WARNING` `ERROR`. |
 | `APPDATA_DIR` | `/appdata` | Container path of the host appdata root (rarely needs changing). |
 | `BACKUP_DIR` | `/backups` | Backup output directory inside the container. |
@@ -239,7 +239,9 @@ https://raw.githubusercontent.com/Krippler/Starr/main/templates/unraid.xml
 
 ## 🌐 API Reference
 
-All protected endpoints require an `X-Api-Key` header matching your `SECRET_KEY`. The SSE stream accepts `?api_key=` as a query parameter instead (browsers cannot set headers on `EventSource`).
+All protected endpoints require an `X-Api-Key` header matching your `SECRET_KEY`. The SSE stream accepts `?api_key=` as a query parameter instead (browsers cannot set headers on `EventSource`); its value is redacted from the access log.
+
+Write requests (`POST` / `PUT` / `DELETE`) must send `Content-Type: application/json` or an `X-Api-Key` header — a bodyless `curl -X POST` needs `-H 'Content-Type: application/json'`. That keeps other websites from driving the API through your browser (see [Security Notes](#-security-notes)).
 
 ### Health / dashboard
 | Method | Endpoint | Auth | Description |
@@ -385,10 +387,12 @@ Starr/
 ## 🔐 Security Notes
 
 - The container runs **non-root** — the entrypoint drops to `PUID:PGID` via gosu.
-- **Set a real `SECRET_KEY`.** The shipped compose/`.env` value is the insecure-default sentinel (`change-me-in-production`), so an unconfigured install fails *loud* — unauthenticated, warned on every request, with a banner in the dashboard — rather than silently authenticating against a value published in this repo.
-- The API-key check is constant-time (`hmac.compare_digest`), so response timing doesn't leak how much of the key matched.
-- API keys are masked in the form, stored server-side in `/backups/.starr-instance-overrides.json`, and never echoed by `/api/repair/status` or the SSE stream.
-- Mounting `/var/run/docker.sock` is opt-in and grants root-equivalent control of the host Docker daemon.
+- **Set a real `SECRET_KEY`.** A blank key, or the shipped compose/`.env` sentinel (`change-me-in-production`), makes an unconfigured install fail *loud* — unauthenticated, warned on every request, with a banner in the dashboard — rather than silently authenticating against a value published in this repo. Without a key, **anyone who can reach the port can use Starr**, including stopping and starting its *arr containers.
+- **Other websites can't drive it through your browser**, key or not: writes must be JSON or carry `X-Api-Key` (both force a CORS preflight that `CORS_ORIGINS` refuses), and requests the browser marks cross-site are rejected unless they carry the key. Neither check depends on the `Host` header, so reverse proxies work unchanged.
+- The API-key check is constant-time (`hmac.compare_digest`), so response timing doesn't leak how much of the key matched. The SSE stream's `?api_key=` is redacted from the access log.
+- **Limits on what the API can touch.** Starr only stops containers it discovered as an *arr or that you configured on an instance — any other name falls back to the app's own shutdown API. A repair or restore only targets a file ending in `.db` (its contents aren't checked, so corrupt databases still work). Its Docker use is list / stop / start — never `exec`, `run`, or image pulls.
+- API keys are masked in the form, stored server-side in `/backups/.starr-*.json` (owner-only, `0600`), and never echoed by `/api/repair/status` or the SSE stream. The database backups themselves contain your *arr's indexer keys and download-client passwords — keep the backups share private.
+- Mounting `/var/run/docker.sock` is opt-in and grants root-equivalent control of the host Docker daemon — the same trade-off as Portainer or Watchtower. Setting a `SECRET_KEY` matters most when it's mounted.
 - Put it behind a reverse proxy with real auth (Authelia, Authentik, nginx basic auth) if it's reachable beyond your LAN.
 - Images are **cosign-signed** (keyless / Sigstore) on every release — verify with `cosign verify`.
 

@@ -42,6 +42,9 @@ def client(tmp_path):
     (tmp_path / "backups").mkdir()
     (tmp_path / "data").mkdir()
     with srv.app.test_client() as c:
+        # Send what the dashboard sends on every call (authHeaders() in
+        # index.html); the cross-site guard rejects bodyless writes without it.
+        c.environ_base["CONTENT_TYPE"] = "application/json"
         yield c
 
 
@@ -261,6 +264,7 @@ def test_shutdown_uses_docker_when_container_name_provided(monkeypatch):
     class FakeContainer:
         def stop(self, timeout=30): stopped.append(timeout)
     monkeypatch.setattr(srv, "_docker_container", lambda n: ("client", FakeContainer()))
+    monkeypatch.setattr(srv, "_stoppable_container", lambda n: True)   # allowlist tested separately
 
     # Container is "stopped" → next status read returns None
     monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)
@@ -1852,6 +1856,7 @@ def test_docker_stop_timeout_but_container_goes_down(monkeypatch):
             raise Exception("UnixHTTPConnectionPool(host='localhost', port=None): "
                             "Read timed out. (read timeout=60)")
     monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+    monkeypatch.setattr(srv, "_stoppable_container", lambda n: True)   # allowlist tested separately
     monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)   # container went down
 
     cfg = {"app": "sportarr", "host": "h", "port": 1, "apikey": "k",
@@ -1892,6 +1897,7 @@ def test_docker_stop_non_timeout_error_fails_fast(monkeypatch):
         def stop(self, timeout=30):
             raise Exception("permission denied while trying to connect to the Docker daemon")
     monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+    monkeypatch.setattr(srv, "_stoppable_container", lambda n: True)   # allowlist tested separately
     polled = []
     monkeypatch.setattr(srv, "_get_status", lambda *a, **k: polled.append(1))
 
@@ -1986,6 +1992,7 @@ def test_stop_is_journalled_and_cleared(monkeypatch, tmp_path):
         def stop(self, timeout=30): pass
         def start(self): pass
     monkeypatch.setattr(srv, "_docker_container", lambda n: ("c", FakeContainer()))
+    monkeypatch.setattr(srv, "_stoppable_container", lambda n: True)   # allowlist tested separately
     monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)
 
     cfg = {"app": "sonarr", "host": "h", "port": 1, "apikey": "k",
@@ -2160,3 +2167,156 @@ def test_repair_log_banner_uses_build_stamp(monkeypatch):
     srv._job.reset()
     srv._repair_worker({"app": "sonarr"})
     assert any(h["msg"] == "Starr DB Repair v9.8.7 – job started for SONARR" for h in srv._job.history)
+
+
+# ── Security hardening (1.3.11) ──────────────────────────────────────────────
+@pytest.mark.parametrize("key", ["", "   ", DEFAULT_SECRET])
+def test_blank_key_counts_as_unset(client, monkeypatch, key):
+    """A blank SECRET_KEY used to pass the sentinel check and then match every
+    keyless request via compare_digest("", "") — open, with no banner. It now
+    behaves exactly like the shipped default: still open (non-breaking), but
+    the insecure banner shows."""
+    monkeypatch.setitem(srv.app.config, "SECRET_KEY", key)
+    assert client.get("/api/config").get_json()["using_default_key"] is True
+    assert client.get("/api/settings").status_code == 200
+
+
+def test_real_key_still_enforced(client, monkeypatch):
+    monkeypatch.setitem(srv.app.config, "SECRET_KEY", "s3cret")
+    assert client.get("/api/config").get_json()["using_default_key"] is False
+    assert client.get("/api/settings").status_code == 401
+    assert client.get("/api/settings", headers={"X-Api-Key": "s3cret"}).status_code == 200
+
+
+def test_cross_site_simple_post_is_refused(client, monkeypatch):
+    """What a malicious page can send without a CORS preflight: text/plain, no
+    custom headers. With no key set this used to reach the handler."""
+    monkeypatch.setitem(srv.app.config, "SECRET_KEY", "")
+    r = client.post("/api/repair/stop", data="{}", content_type="text/plain")
+    assert r.status_code == 415
+    r = client.delete("/api/backups/x.db", content_type="text/plain")
+    assert r.status_code == 415
+
+
+def test_browser_flagged_cross_site_write_is_refused(client, monkeypatch):
+    monkeypatch.setitem(srv.app.config, "SECRET_KEY", "")
+    r = client.post("/api/repair/stop", json={}, headers={"Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+
+
+def test_dashboard_style_writes_pass_the_guard(client, monkeypatch):
+    """Same-origin JSON (what the dashboard sends) and requests carrying the
+    key (which already force a CORS preflight) are untouched."""
+    monkeypatch.setitem(srv.app.config, "SECRET_KEY", "")
+    srv._job.running = False
+    assert client.post("/api/repair/stop", json={},
+                       headers={"Sec-Fetch-Site": "same-origin"}).status_code == 409   # reached handler
+    monkeypatch.setitem(srv.app.config, "SECRET_KEY", "s3cret")
+    assert client.post("/api/repair/stop", data="", content_type="text/plain",
+                       headers={"X-Api-Key": "s3cret", "Sec-Fetch-Site": "cross-site"}).status_code == 409
+
+
+def test_guard_ignores_reads_and_non_api_paths(client, monkeypatch):
+    monkeypatch.setitem(srv.app.config, "SECRET_KEY", "")
+    assert client.get("/api/settings", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
+    assert client.get("/healthz", content_type="text/plain").status_code == 200
+
+
+def _access_record(request_line, query):
+    import logging
+    rec = logging.LogRecord("gunicorn.access", logging.INFO, __file__, 1, '"%(r)s" %(s)s', (), None)
+    rec.args = {"r": request_line, "q": query, "s": "200", "U": "/api/repair/stream"}
+    return rec
+
+
+def _gunicorn_conf():
+    import importlib.util
+    path = os.path.join(os.path.dirname(__file__), "..", "app", "gunicorn.conf.py")
+    spec = importlib.util.spec_from_file_location("gunicorn_conf", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_access_log_redacts_api_key():
+    """The dashboard's SSE stream carries the key as ?api_key= and gunicorn
+    logs the full request line — so the key landed in the container log."""
+    conf = _gunicorn_conf()
+    rec = _access_record("GET /api/repair/stream?api_key=s3cret&x=1 HTTP/1.1", "api_key=s3cret&x=1")
+    assert conf._RedactApiKeyFilter().filter(rec) is True     # line is kept…
+    msg = rec.getMessage()
+    assert "s3cret" not in msg                                # …but the key is gone
+    assert "api_key=REDACTED&x=1" in msg
+    assert rec.args["q"] == "api_key=REDACTED&x=1"
+
+
+def test_access_log_without_key_unchanged():
+    conf = _gunicorn_conf()
+    rec = _access_record("GET /api/history?limit=30 HTTP/1.1", "limit=30")
+    conf._RedactApiKeyFilter().filter(rec)
+    assert rec.getMessage() == '"GET /api/history?limit=30 HTTP/1.1" 200'
+
+
+def test_stoppable_container_allowlist(monkeypatch):
+    monkeypatch.setitem(srv._discovery_cache, "apps", [{"container_name": "sonarr"}])
+    monkeypatch.setattr(srv._instances, "all", lambda: [{"container_name": "sonarr-4k"}])
+    monkeypatch.setattr(srv._instances, "all_overrides", lambda: {"radarr": {"container_name": "movies"}})
+    assert srv._stoppable_container("sonarr")      # discovered
+    assert srv._stoppable_container("sonarr-4k")   # configured instance
+    assert srv._stoppable_container("movies")      # dashboard override
+    assert not srv._stoppable_container("unraid-vm-manager")
+    assert not srv._stoppable_container("")
+
+
+def test_unknown_container_falls_back_to_app_shutdown(monkeypatch):
+    """A container name that isn't discovered/configured is never stopped via
+    Docker — the repair still works through the app's own shutdown API."""
+    srv._job.reset()
+    srv._job.start_time = srv.time.time()
+    monkeypatch.setattr(srv.time, "sleep", lambda *a, **k: None)
+    monkeypatch.setitem(srv._discovery_cache, "apps", [])
+    monkeypatch.setattr(srv._instances, "all", lambda: [])
+    monkeypatch.setattr(srv._instances, "all_overrides", lambda: {})
+    looked_up = []
+    monkeypatch.setattr(srv, "_docker_container", lambda n: looked_up.append(n) or (None, None))
+    api_called = []
+    monkeypatch.setattr(srv, "_shutdown_app", lambda *a, **k: api_called.append(a) or True)
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: None)
+    cfg = {"app": "sonarr", "host": "h", "port": 1, "apikey": "k", "container_name": "postgres"}
+    srv._step_shutdown(cfg)
+    assert looked_up == [], "an unknown container must never reach the Docker API"
+    assert api_called, "must fall back to the app's shutdown API"
+    assert "_docker_managed" not in cfg, "nothing may be queued for a docker start"
+
+
+def test_is_db_file(tmp_path):
+    (tmp_path / "sonarr.db").write_bytes(b"not even sqlite - corrupt is fine")
+    (tmp_path / "whisparr2.DB").write_bytes(b"x")
+    (tmp_path / "config.xml").write_text("<Config/>")
+    (tmp_path / "dir.db").mkdir()
+    assert srv._is_db_file(str(tmp_path / "sonarr.db"))
+    assert srv._is_db_file(str(tmp_path / "whisparr2.DB"))
+    assert not srv._is_db_file(str(tmp_path / "config.xml"))
+    assert not srv._is_db_file(str(tmp_path / "dir.db"))
+    assert not srv._is_db_file(str(tmp_path / "missing.db"))
+
+
+def test_preflight_refuses_non_db_target(monkeypatch, tmp_path):
+    target = tmp_path / "config.xml"
+    target.write_text("<Config/>")
+    srv._job.reset()
+    monkeypatch.setattr(srv, "_get_status", lambda *a, **k: {"version": "4", "osName": "x"})
+    cfg = {"app": "sonarr", "host": "h", "port": 1, "apikey": "k", "db_path": str(target)}
+    assert srv._step_preflight(cfg) is None
+    assert any("must be a file ending in .db" in h["msg"] for h in srv._job.history)
+
+
+def test_state_files_are_owner_only(tmp_path):
+    from instances import InstanceStore
+    store = InstanceStore(tmp_path / ".starr-instances.json", ["sonarr"])
+    store.set_override("sonarr", {"apikey": "abc"})
+    assert (tmp_path / ".starr-instance-overrides.json").stat().st_mode & 0o777 == 0o600
+    old = tmp_path / ".starr-notify.json"
+    old.write_text("{}"); old.chmod(0o644)                  # as an older version left it
+    srv._restrict_state_files(tmp_path)
+    assert old.stat().st_mode & 0o777 == 0o600

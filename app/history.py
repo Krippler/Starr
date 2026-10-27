@@ -51,6 +51,7 @@ class HistoryStore:
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
             tmp.parent.mkdir(parents=True, exist_ok=True)
             tmp.write_text(json.dumps(self._items, indent=2))
+            tmp.chmod(0o600)   # owner-only, like every .starr-*.json (some hold API keys)
             tmp.replace(self.path)
 
     def record(self, entry: dict) -> dict:

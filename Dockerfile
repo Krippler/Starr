@@ -81,8 +81,8 @@ ENV STARR_VERSION=${STARR_VERSION}
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Launch with gunicorn (1 worker, threaded for SSE).
-# --config loads gunicorn.conf.py (in /app), whose only job is to filter the
-# container's own /healthz + /readyz probes out of the access log.
+# --config loads gunicorn.conf.py (in /app), which filters the container's own
+# /healthz + /readyz probes out of the access log and redacts ?api_key= values.
 CMD ["gunicorn", \
      "--config", "gunicorn.conf.py", \
      "--bind", "0.0.0.0:8877", \

@@ -6,6 +6,19 @@ Images are published to Docker Hub (`krippler52/starr`) and GHCR (`ghcr.io/kripp
 The top section's heading is what the release workflow reads: `## [X.Y.Z] — DATE`
 on `main` publishes that version, `## [Unreleased]` publishes only `edge`.
 
+## [1.3.11] — 2026-10-27
+
+Security hardening. Nothing changes for existing installs: no settings to change, no data to migrate, and the dashboard works exactly as before with or without a key.
+
+### Security
+- **A blank `SECRET_KEY` now shows the insecure banner.** Only the exact `change-me-in-production` placeholder counted as "no key", so a blank key — the Unraid template's default — ran unauthenticated with no warning at all. Blank now behaves exactly like the placeholder: still usable without a key (so no install is locked out by updating), but the dashboard and the log say so.
+- **Other websites can no longer drive the API through your browser.** Without a key, any page you visited could send a plain-text form post to `http://<server>:8877/api/...` and stop containers or change settings. Write requests must now be JSON or carry `X-Api-Key`, and requests the browser marks cross-site are refused unless they carry the key. The dashboard already sends both, and the checks don't depend on the `Host` header, so reverse proxies are unaffected. Scripts that `POST` with no body and no key need `-H 'Content-Type: application/json'`.
+- **The Web Key no longer appears in the container log.** The dashboard's live log stream passes it as `?api_key=` (browsers can't send headers there), and gunicorn logged the full URL — readable in Unraid's log viewer and in diagnostics bundles. The value is now logged as `REDACTED`.
+- **Starr only stops containers it knows.** A repair request could name any container on the host to stop. Only containers discovered as an *arr, or configured on an instance, are now stopped via Docker; any other name falls back to the app's own shutdown API. Restarting containers Starr stopped is never restricted.
+- **Repairs and restores only target `.db` files.** The database path a request supplies is now required to be a file ending in `.db` (every *arr database is). Its contents aren't checked, so corrupt databases still work.
+- **Stored secrets are owner-only.** `/backups/.starr-*.json` (*arr API keys, notification tokens) was world-readable; it's now written `0600`, and files left by older versions are tightened at startup. Backup files themselves are unchanged.
+- **Apprise 1.9.2 → 1.11.0** for CVE-2026-59180: a compromised notification endpoint could redirect Apprise and receive your notification token.
+
 ## [1.3.10] — 2026-10-01
 
 ### Fixed

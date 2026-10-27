@@ -140,19 +140,58 @@ OP_DESC = {
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
+_DEFAULT_SECRET = "change-me-in-production"
+
+
+def _auth_disabled() -> bool:
+    """True when no real SECRET_KEY is set. A blank key counts as unset: it
+    used to slip past the sentinel check, and then compare_digest("", "")
+    let every keyless request in — unauthenticated, with no insecure banner.
+    (Unraid's template defaults the field to blank.)"""
+    return (app.config["SECRET_KEY"] or "").strip() in ("", _DEFAULT_SECRET)
+
+
+_UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.before_request
+def _block_cross_site_writes():
+    """Stop other websites from driving the API through the user's browser.
+
+    Without a SECRET_KEY nothing else stands in the way: a page on any site
+    could POST a text/plain "simple request" (no CORS preflight) at
+    http://<server>:8877/api/... and stop containers or change settings. So a
+    write must either carry X-Api-Key or be application/json — both of which
+    force a preflight that CORS_ORIGINS then refuses — and a browser that says
+    the request is cross-site is turned away unless it carries the key. The
+    dashboard always sends JSON (and the key when one is set), and both checks
+    look only at what the browser sends, so reverse proxies are unaffected.
+    """
+    if request.method not in _UNSAFE_METHODS or not request.path.startswith("/api/"):
+        return None
+    if request.headers.get("X-Api-Key"):
+        return None
+    if request.headers.get("Sec-Fetch-Site") == "cross-site":
+        return jsonify({"error": "Cross-site request blocked"}), 403
+    if request.mimetype != "application/json":
+        return jsonify({"error": "Content-Type must be application/json"}), 415
+    return None
+
+
 def require_api_key(f):
     """Protect endpoints with the SECRET_KEY.
 
     Accepts the key via:
       - X-Api-Key request header  (fetch / XHR)
-      - ?api_key= query parameter  (EventSource / SSE, which can't set headers)
+      - ?api_key= query parameter  (EventSource / SSE, which can't set headers;
+        gunicorn.conf.py redacts it from the access log)
     """
     @wraps(f)
     def decorated(*args, **kwargs):
         secret = app.config["SECRET_KEY"]
         # If still using the default key, skip enforcement so out-of-box
         # experience works, but log a warning on every request.
-        if secret == "change-me-in-production":
+        if _auth_disabled():
             log.warning("SECRET_KEY is still the default — set a real value in .env!")
             return f(*args, **kwargs)
         provided = (
@@ -358,6 +397,18 @@ def _docker_container(name):
         return None, None
 
 
+def _stoppable_container(name: str) -> bool:
+    """May Starr stop this container? Only ones it discovered as an *arr or
+    that the user configured on an instance — not any name a request body
+    supplies, since the socket would let that stop anything on the host.
+    Checked only before a STOP: starting back up what Starr itself stopped
+    must never be refused (discovery doesn't list stopped containers)."""
+    known = {a.get("container_name") for a in _discovery_cache.get("apps", [])}
+    known |= {i.get("container_name") for i in _instances.all()}
+    known |= {o.get("container_name") for o in _instances.all_overrides().values()}
+    return name in known - {None, ""}
+
+
 # ---------------------------------------------------------------------------
 # Stopped-container bookkeeping
 #
@@ -504,6 +555,16 @@ def _fmt_mb(n: float) -> str:
 # ---------------------------------------------------------------------------
 # Repair steps
 # ---------------------------------------------------------------------------
+def _is_db_file(path: str) -> bool:
+    """A repair or restore may only target a regular file named *.db — every
+    *arr database is (sonarr.db, whisparr2.db, db/bazarr.db). The db_path a
+    request supplies is otherwise unchecked, and restore writes over it. The
+    file's contents are deliberately not checked: a corrupt database is
+    exactly what this tool exists to fix."""
+    p = Path(path)
+    return p.name.lower().endswith(".db") and p.is_file()
+
+
 def _resolve_db_override(app_name: str, override: str | None) -> str:
     """Turn a user-supplied db_path override into a full container path.
 
@@ -599,6 +660,9 @@ def _step_preflight(cfg) -> str | None:
                     "non-standard DB name (e.g. whisparr2.db), set it in the "
                     "'Database path' field on the Connection panel.", "err")
         return None
+    if not _is_db_file(db_path):
+        emit("ERR", f"Refusing {db_path}: the database path must be a file ending in .db.", "err")
+        return None
 
     mb = Path(db_path).stat().st_size / 1_048_576
     emit("OK",   f"DB confirmed: {db_path}  ({mb:.1f} MB)", "ok")
@@ -646,6 +710,10 @@ def _step_shutdown(cfg) -> bool:
     # Preferred path: if the user supplied a container name and we can reach
     # the Docker daemon, stop the container outright. This sidesteps the
     # restart-policy race that breaks the /api/v3/system/shutdown approach.
+    if container_name and not _stoppable_container(container_name):
+        emit("WARN", f"'{container_name}' isn't a discovered or configured container — "
+                     "not stopping it via Docker; using the app's shutdown API instead.", "warn")
+        container_name = ""
     if container_name:
         client, container = _docker_container(container_name)
         if container is None:
@@ -1368,7 +1436,7 @@ def _resolve_conn_lenient(cfg: dict) -> None:
 @app.route("/")
 def index():
     # Pass whether a real SECRET_KEY has been configured so the UI can warn
-    using_default_key = app.config["SECRET_KEY"] == "change-me-in-production"
+    using_default_key = _auth_disabled()
     return render_template("index.html", config=app.config, using_default_key=using_default_key,
                            app_version=APP_VERSION_DISPLAY)
 
@@ -1392,7 +1460,7 @@ def api_config():
     so it can display a security warning without needing Jinja2 templating.
     """
     return jsonify({
-        "using_default_key": app.config["SECRET_KEY"] == "change-me-in-production",
+        "using_default_key": _auth_disabled(),
     }), 200
 
 
@@ -1806,6 +1874,9 @@ def api_backup_restore(name):
         if not db_path:
             return jsonify({"error": f"could not locate {app_name}'s database to restore into"}), 400
         cfg["db_path"] = db_path
+    if not _is_db_file(cfg["db_path"]):
+        return jsonify({"error": f"refusing to restore over {cfg['db_path']}: "
+                                 "the database path must be a file ending in .db"}), 400
     _resolve_conn_lenient(cfg)
     if not cfg.get("container_name") and not cfg.get("apikey"):
         return jsonify({"error": "no way to stop the app safely — need a discoverable "
@@ -1853,6 +1924,18 @@ _history = HistoryStore(app.config["BACKUP_DIR"] / ".starr-history.json")
 # User-added extra instances (e.g. a second Sonarr). Defaults stay env/discovery.
 _instances = InstanceStore(app.config["BACKUP_DIR"] / ".starr-instances.json",
                            APP_DEFAULTS.keys())
+
+def _restrict_state_files(backup_dir: Path) -> None:
+    """The stores write owner-only from now on; tighten files an older version
+    left world-readable (they hold *arr API keys and notification tokens)."""
+    for f in backup_dir.glob(".starr-*.json"):
+        try:
+            f.chmod(0o600)
+        except OSError as e:
+            log.warning("Could not restrict permissions on %s: %s", f, e)
+
+
+_restrict_state_files(app.config["BACKUP_DIR"])
 
 
 def _synthesized_defaults() -> list[dict]:
