@@ -75,12 +75,18 @@ class InstanceStore:
             tmp = self.overrides_path.with_suffix(self.overrides_path.suffix + ".tmp")
             tmp.parent.mkdir(parents=True, exist_ok=True)
             tmp.write_text(json.dumps(self._overrides, indent=2))
+            tmp.chmod(0o600)   # owner-only, like every .starr-*.json (some hold API keys)
             tmp.replace(self.overrides_path)
 
     def get_override(self, iid: str) -> dict:
         """Per-instance UI-entered credentials. Empty dict if none."""
         with self._lock:
             return dict(self._overrides.get((iid or "").lower(), {}))
+
+    def all_overrides(self) -> dict[str, dict]:
+        """Every instance's UI-entered credentials, keyed by instance id."""
+        with self._lock:
+            return {k: dict(v) for k, v in self._overrides.items()}
 
     def set_override(self, iid: str, fields: dict) -> dict:
         """Persist apikey/url/container_name/db_path overrides for an instance
@@ -109,6 +115,7 @@ class InstanceStore:
             tmp = self.path.with_suffix(self.path.suffix + ".tmp")
             tmp.parent.mkdir(parents=True, exist_ok=True)
             tmp.write_text(json.dumps(self._items, indent=2))
+            tmp.chmod(0o600)   # owner-only, like every .starr-*.json (some hold API keys)
             tmp.replace(self.path)
 
     def all(self) -> list[dict]:
